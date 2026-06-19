@@ -6,9 +6,9 @@ Update this file after every completed feature. Any AI agent reading this should
 
 ## Current Status
 
-**Phase:** Phase 3 — Find Jobs Page
-**Last completed:** 10 ITPro.lk Job Discovery (real agent pipeline wired into the Feature 09 UI)
-**Next:** 11 Filter + Sort + Pagination
+**Phase:** Phase 3 — Find Jobs Page (complete)
+**Last completed:** 11 Filter + Sort + Pagination (real DB-backed filter/sort/search/pagination wired into the Find Jobs table)
+**Next:** 12 Job Details Page — Full UI
 
 ---
 
@@ -32,7 +32,7 @@ Update this file after every completed feature. Any AI agent reading this should
 
 - [x] 09 Find Jobs Page — Full UI
 - [x] 10 ITPro.lk Job Discovery
-- [ ] 11 Filter + Sort + Pagination
+- [x] 11 Filter + Sort + Pagination
 
 ### Phase 4 — Job Details Page
 
@@ -127,7 +127,15 @@ Update this file after every completed feature. Any AI agent reading this should
 - **New `agent/logger.ts`** — `logAgentError(insforge, runId, userId, jobId, error)`, the first agent_logs writer in the project (code-standards.md's Agent Code convention referenced `logAgentError` as if it already existed; it didn't, this feature created it). Shared by `agent/itpro.ts` and intended for `agent/research.ts`/`agent/extractor.ts` later.
 - **Scoring runs sequentially, not in parallel** (`for` loop in `agent/itpro.ts`, one Gemini call at a time) — matches the project's existing conservative single-session pattern (Browserbase's "never parallel sessions") and avoids amplifying the 429 quota issue already hit once on this Gemini key during Feature 07.
 - **`job_found`/`job_search_started` PostHog events fire server-side** from `agent/itpro.ts` (per saved job) and `app/api/agent/find/route.ts` (once per request) respectively — consistent with how `sign_in_initiated`/`sign_in_succeeded` already fire server-side for click-triggered actions, even though code-standards.md's event table phrases `job_search_started` as "Find Jobs button clicked."
-- **Verified the real Gemini matching call before wiring the authenticated route** via a temporary debug route (`app/api/debug-agent-find`, created and deleted within this session, same precedent as Features 07/08): real ITPro.lk jobs scored against a sample frontend-engineer profile produced grounded, sensible low scores against a DevSecOps/QA posting with accurate missing-skills lists — confirmed before trusting the pipeline. **Not yet re-verified through the actual authenticated browser flow** (real login session, real Find Jobs click, confirming jobs land in InsForge and render in the table) — that's the next thing to do.
+- **Verified the real Gemini matching call before wiring the authenticated route** via a temporary debug route (`app/api/debug-agent-find`, created and deleted within this session, same precedent as Features 07/08): real ITPro.lk jobs scored against a sample frontend-engineer profile produced grounded, sensible low scores against a DevSecOps/QA posting with accurate missing-skills lists — confirmed before trusting the pipeline. **Confirmed working end-to-end through the actual authenticated browser flow** (real login session, real Find Jobs click) — the developer confirmed API calls succeed and jobs land in InsForge.
+
+- **Feature 11 wired `JobFilters`/`JobsPagination` to real InsForge queries via URL search params** (`q`, `match`, `sort`, `page`) on `app/find-jobs/page.tsx` — chosen over client-side-only filtering since `JobsTable` is a Server Component reading paginated DB rows, not a full client-fetched list. New `lib/find-jobs.ts` holds the shared `MatchFilter`/`SortOption` types, `parseMatchFilter`/`parseSortOption`, and `buildFindJobsUrl()` so the page (parsing `searchParams`) and the two client components (constructing navigation URLs) share one source of truth instead of duplicating the param contract.
+- **High/Low Match reuses the existing `MATCH_THRESHOLD` constant from `lib/utils.ts`** (`gte`/`lt` on `match_score`) rather than a separate literal `70` — keeps the Find Jobs filter consistent with Feature 10's "strong match" definition.
+- **Text search uses PostgREST `.or().ilike()` across `company`/`title`**, with a small `escapeForIlike()` in `page.tsx` stripping `%`/`_`/`,` from user input — `,` would otherwise break the `or()` filter list's comma-delimited syntax, and `%`/`_` are ilike wildcards that would let a search term inject unintended pattern matches.
+- **`JobFilters` and `JobsPagination` deliberately avoid `useSearchParams()`** — `app/find-jobs/page.tsx` already parses `searchParams` server-side and passes the resolved `query`/`match`/`sort` down as props, so the two client components only need `useRouter`/`usePathname`-style navigation (no `useSearchParams`, no `Suspense` boundary required, per Next.js's "must wrap in Suspense" rule for that specific hook).
+- **Text search is debounced 400ms** via `JobFilters`' local `searchInput` state before calling `router.replace()`; dropdown changes (`match`/`sort`) navigate immediately on `onChange`. Local input state is resynced from the `query` prop using React's recommended "adjust state during render" pattern (an `if` check against a `syncedQuery` mirror, not a `useEffect`) so browser back/forward updates the field without tripping the `react-hooks/set-state-in-effect` lint rule.
+- **Filter/search changes use `router.replace`, pagination uses `router.push`** — deliberate split so retyping a search term doesn't fill browser history with one entry per keystroke, while paging through results still lets the back button step through previous pages.
+- **Found and fixed a second `JobsPagination` issue while wiring real clicks**: the final-page button (shown after the ellipsis) never got the active/highlighted style even when it was the current page — only the first three `leadingPageNumbers` buttons checked `page === currentPage`. Extracted a shared `pageButtonClasses()` helper and applied it to both.
 
 ## Notes
 

@@ -304,7 +304,9 @@ Last updated: 2026-06-19
 | Accent usage       | focus rings only (`focus:ring-1 ring-accent`)                        |
 
 **Pattern notes:**
-Text search input reuses the same icon-prefixed input pattern as `SearchControls`. The two `<select>` dropdowns reuse the existing **Form field** shared pattern at native size — no shadcn primitives. All three controls are purely decorative for Feature 09 (no `onChange`, plain Server Component) — Feature 11 wires them to real filter/sort/search logic against DB data.
+Text search input reuses the same icon-prefixed input pattern as `SearchControls`. The two `<select>` dropdowns reuse the existing **Form field** shared pattern at native size — no shadcn primitives.
+
+**Feature 11 update — wired to real DB filter/sort/search:** now a client component receiving `query`/`match`/`sort` as props from `app/find-jobs/page.tsx` (which parses `searchParams` server-side). Text input is locally debounced (400ms) before navigating via `router.replace`; the two `<select>`s navigate immediately on `onChange`. Navigation URLs are built with the shared `buildFindJobsUrl()` helper in `lib/find-jobs.ts` rather than `useSearchParams()` — avoids needing a `Suspense` boundary since the resolved values already arrive as props. No visual changes from Feature 09/10; `value`/`onChange` were added to the existing markup only.
 
 ### JobsTable
 
@@ -346,7 +348,9 @@ Last updated: 2026-06-19
 | Accent usage       | active page number only — `bg-accent text-accent-foreground`        |
 
 **Pattern notes:**
-Fully static — `currentPage`/`totalPages`/`from`/`to`/`total` are passed in as props, but no button has an `onClick`. Feature 11 will wire real pagination state against DB query results. Page-number row renders up to the first 3 pages (`leadingPageNumbers`, derived from the real `totalPages` prop, not hardcoded), then an ellipsis + final-page button only when `totalPages` exceeds that — **fixed in Feature 10** after the real DB-backed page only had 1 page and exposed that the original implementation hardcoded `[1, 2, 3]` regardless of the `totalPages` prop (Feature 09's mock always passed `totalPages=8`, which masked the bug). `app/find-jobs/page.tsx` only renders this component at all when there's at least one job.
+Page-number row renders up to the first 3 pages (`leadingPageNumbers`, derived from the real `totalPages` prop, not hardcoded), then an ellipsis + final-page button only when `totalPages` exceeds that — **fixed in Feature 10** after the real DB-backed page only had 1 page and exposed that the original implementation hardcoded `[1, 2, 3]` regardless of the `totalPages` prop (Feature 09's mock always passed `totalPages=8`, which masked the bug). `app/find-jobs/page.tsx` only renders this component at all when there's at least one job.
+
+**Feature 11 update — wired to real pagination:** now a client component; Previous/Next/page-number/last-page buttons call `router.push()` (not `replace`, so the back button steps through pages) via the shared `buildFindJobsUrl()` helper, carrying the current `query`/`match`/`sort` props through so paging never drops the active filters. Also fixed a second latent bug found while wiring real clicks: the final-page button (after the ellipsis) never received the active/highlighted style even when it was the current page — only the three `leadingPageNumbers` buttons checked `page === currentPage`. Extracted both buttons' class logic into one shared `pageButtonClasses()` function.
 
 ---
 
