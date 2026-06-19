@@ -45,7 +45,8 @@ next-env.d.ts
 .agents/
 .claude/
 .mcp.json
-context/
 memory.md
 posthog-setup-report.md
 skills-lock.json
+AGENTS.md
+CLAUDE.md

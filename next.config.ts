@@ -1,6 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // pdf-parse bundles pdfjs-dist's worker as a separate file the bundler can't resolve
+  // unless these stay external packages, per pdf-parse's own Next.js troubleshooting docs
+  serverExternalPackages: ["pdf-parse", "@napi-rs/canvas"],
   async rewrites() {
     return [
       {
