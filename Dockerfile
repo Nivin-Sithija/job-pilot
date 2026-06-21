@@ -13,6 +13,22 @@ FROM base AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+
+# NEXT_PUBLIC_* vars get inlined into the client bundle at `next build` time, not read at
+# container runtime — env_file/docker-compose env vars set later have zero effect on these.
+# Must be passed as --build-arg at image-build time (see deploy.yml) or the shipped bundle
+# silently has `undefined` baked in for all of these, permanently, until the next rebuild.
+ARG NEXT_PUBLIC_INSFORGE_URL
+ARG NEXT_PUBLIC_INSFORGE_ANON_KEY
+ARG NEXT_PUBLIC_APP_URL
+ARG NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN
+ARG NEXT_PUBLIC_POSTHOG_HOST
+ENV NEXT_PUBLIC_INSFORGE_URL=$NEXT_PUBLIC_INSFORGE_URL
+ENV NEXT_PUBLIC_INSFORGE_ANON_KEY=$NEXT_PUBLIC_INSFORGE_ANON_KEY
+ENV NEXT_PUBLIC_APP_URL=$NEXT_PUBLIC_APP_URL
+ENV NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=$NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN
+ENV NEXT_PUBLIC_POSTHOG_HOST=$NEXT_PUBLIC_POSTHOG_HOST
+
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 

@@ -273,6 +273,8 @@ All environment variables defined in `.env.local` for development. Never hardcod
 
 `NEXT_PUBLIC_` prefix means the variable is exposed to the browser. Never add `NEXT_PUBLIC_` to secret keys.
 
+**In the Docker deploy pipeline, this split also means a build-time vs. runtime split**: every `NEXT_PUBLIC_*` var gets inlined into the client bundle at `next build` time and must be passed as a `--build-arg`/`build-args:` to the Docker build (see `Dockerfile`'s `ARG`/`ENV` block and `.github/workflows/deploy.yml`) — setting it via `docker run -e` or `env_file` at container runtime does nothing, the bundle is already compiled by then. Every non-`NEXT_PUBLIC_` var is the opposite — read via `process.env` at runtime inside the container, never needed at build time, and never passed to GitHub Actions at all (lives only in `.env.production` on the droplet). See `.claude/skills/deploy` for the full breakdown.
+
 ---
 
 ## Match Threshold
