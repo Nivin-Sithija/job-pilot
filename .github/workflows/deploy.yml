@@ -83,12 +83,17 @@ jobs:
           host: ${{ secrets.DROPLET_HOST }}
           username: ${{ secrets.DROPLET_USER }}
           key: ${{ secrets.DROPLET_SSH_KEY }}
-          envs: IMAGE
           script: |
             set -e
             cd "${DROPLET_APP_DIR:-/opt/job-pilot}"
+            # docker-compose.yml's caddy service interpolates ${DOMAIN:-:80} at compose-parse
+            # time, which only sees .env.production's values if they're in the actual shell
+            # environment (env_file: on the app service is a separate, container-runtime-only
+            # mechanism that doesn't feed compose-file variable substitution at all).
+            set -a
+            source .env.production
+            set +a
             export IMAGE="${{ needs.build-and-push.outputs.image }}"
-            echo "IMAGE=$IMAGE" > .image-env
-            docker compose --env-file .image-env pull app
-            docker compose --env-file .image-env up -d
+            docker compose pull app
+            docker compose up -d
             docker image prune -f

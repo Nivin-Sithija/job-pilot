@@ -19,17 +19,22 @@ function getAnonymousDistinctId(request: NextRequest): string {
   return "anonymous";
 }
 
+// Next.js standalone's server.js always passes a literal `hostname` (Docker sets HOSTNAME
+// to the container ID) into the server, so it builds `request.url` from that container
+// hostname + internal port instead of the proxied request's real Host header — `new URL(path,
+// request.url)` redirects to an unreachable address behind any reverse proxy. Build absolute
+// redirect URLs from NEXT_PUBLIC_APP_URL instead, matching actions/auth.ts's redirectTo.
+const appUrl = process.env.NEXT_PUBLIC_APP_URL!;
+
 export async function GET(request: NextRequest) {
   const code = request.nextUrl.searchParams.get("insforge_code");
   const codeVerifier = request.cookies.get(CODE_VERIFIER_COOKIE)?.value;
 
   if (!code) {
-    return NextResponse.redirect(
-      new URL("/login?error=missing_code", request.url),
-    );
+    return NextResponse.redirect(new URL("/login?error=missing_code", appUrl));
   }
 
-  const response = NextResponse.redirect(new URL("/dashboard", request.url));
+  const response = NextResponse.redirect(new URL("/dashboard", appUrl));
 
   try {
     const auth = createAuthActions({
@@ -50,7 +55,7 @@ export async function GET(request: NextRequest) {
         properties: { reason: "exchange_failed" },
       });
       return NextResponse.redirect(
-        new URL("/login?error=exchange_failed", request.url),
+        new URL("/login?error=exchange_failed", appUrl),
       );
     }
 
@@ -73,7 +78,7 @@ export async function GET(request: NextRequest) {
       properties: { reason: "exception" },
     });
     return NextResponse.redirect(
-      new URL("/login?error=exchange_failed", request.url),
+      new URL("/login?error=exchange_failed", appUrl),
     );
   }
 }
