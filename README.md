@@ -6,8 +6,6 @@
 
 JobPilot discovers jobs, scores them against your real skills, researches the companies, and hands you a ready-to-apply shortlist — so you spend your time applying, not searching.
 
-[Live Demo](https://64.227.162.172.nip.io) · [Report a Bug](https://github.com/Nivin-Sithija/job-pilot/issues)
-
 </div>
 
 ---
