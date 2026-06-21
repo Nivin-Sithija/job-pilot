@@ -8,6 +8,11 @@ import { getPostHogClient } from "@/lib/posthog-server";
 
 const CODE_VERIFIER_COOKIE = "insforge_code_verifier";
 
+// Secure cookies are dropped by the browser on a plain-HTTP origin (no domain/TLS yet — see
+// architecture.md's Hosting section), which silently breaks the PKCE round trip. Derive from
+// the configured app URL so this self-corrects once a real https:// domain is in place.
+const IS_HTTPS_APP_URL = process.env.NEXT_PUBLIC_APP_URL?.startsWith("https://") ?? false;
+
 function getPostHogDistinctId(cookieStore: Awaited<ReturnType<typeof cookies>>): string {
   try {
     const raw = cookieStore.get(`ph_${process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN}_posthog`)?.value;
@@ -49,7 +54,7 @@ async function startOAuthSignIn(provider: "google" | "github") {
   if (data.codeVerifier) {
     cookieStore.set(CODE_VERIFIER_COOKIE, data.codeVerifier, {
       httpOnly: true,
-      secure: true,
+      secure: IS_HTTPS_APP_URL,
       sameSite: "lax",
       maxAge: 60 * 10,
       path: "/",
