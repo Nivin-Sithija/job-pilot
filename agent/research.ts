@@ -4,6 +4,7 @@ import { z } from "zod";
 import { generateContentWithRetry } from "@/lib/gemini";
 import { createLocalStagehand } from "@/lib/stagehand";
 import { deriveHomepageUrl } from "@/lib/itpro";
+import { isPrivateOrLocalUrl } from "@/lib/url-safety";
 import type { createInsforgeServer } from "@/lib/insforge-server";
 import type { Profile } from "@/lib/profile";
 import { logAgentError } from "@/agent/logger";
@@ -61,6 +62,18 @@ async function gatherCompanyResearch(
   userId: string,
 ): Promise<{ homepage: z.infer<typeof homepageExtractSchema>; subPages: SubPageData[] } | null> {
   const homepageUrl = deriveHomepageUrl(job.website, job.company);
+
+  if (await isPrivateOrLocalUrl(homepageUrl)) {
+    await logAgentError(
+      insforge,
+      runId,
+      userId,
+      job.id,
+      new Error(`Refused to navigate to private/local URL derived from job.website: ${homepageUrl}`),
+    );
+    return null;
+  }
+
   const stagehand = createLocalStagehand();
 
   try {
@@ -107,16 +120,49 @@ async function gatherCompanyResearch(
   }
 }
 
+// No browser content and no Gemini result to draw from — last-resort dossier built purely
+// from data already on hand (job + profile), so jobs.company_research is never left empty.
+// Matches architecture.md's "always return a dossier — never return empty" invariant for the
+// one path the Gemini-synthesis step itself can't recover from (e.g. sustained 429/503 past
+// generateContentWithRetry's 3 attempts).
+function buildFallbackDossier(job: ResearchJob, profile: Profile): CompanyDossier {
+  const matchedSkills = job.matchedSkills ?? [];
+  const missingSkills = job.missingSkills ?? [];
+
+  return {
+    companyOverview:
+      job.aboutRole ?? `${job.company} — full company research could not be completed this time.`,
+    techStack: matchedSkills,
+    culture: [],
+    whyThisRole:
+      matchedSkills.length > 0
+        ? `Your skills in ${matchedSkills.join(", ")} line up with what this role asks for.`
+        : "Not enough information to assess fit beyond the job posting.",
+    yourEdge: matchedSkills.map((skill) => `Direct experience with ${skill}`),
+    gapsToAddress: missingSkills.map(
+      (skill) => `${skill} isn't on your profile yet — be ready to speak to adjacent experience.`,
+    ),
+    smartQuestions: [
+      `What does success look like in this role at ${job.company} in the first 90 days?`,
+      "How does the team typically structure onboarding for someone with my background?",
+    ],
+    interviewPrep: [
+      `Review ${profile.currentTitle ?? "your"} experience for stories that map to: ${job.aboutRole ?? "the role description"}.`,
+    ],
+    sources: ["Job posting and candidate profile only — company research could not be completed."],
+  };
+}
+
 export async function researchCompany(
   job: ResearchJob,
   profile: Profile,
   runId: string,
   userId: string,
   insforge: Awaited<ReturnType<typeof createInsforgeServer>>,
-): Promise<{ success: true; dossier: CompanyDossier } | { success: false; error: string }> {
-  try {
-    const companyResearch = await gatherCompanyResearch(job, insforge, runId, userId);
+): Promise<{ success: true; dossier: CompanyDossier; degraded: boolean }> {
+  const companyResearch = await gatherCompanyResearch(job, insforge, runId, userId);
 
+  try {
     const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
 
     const userPrompt = `COMPANY RESEARCH (from their website):
@@ -135,7 +181,7 @@ Skills: ${profile.skills.join(", ")}
 Work history: ${JSON.stringify(profile.workExperience)}`;
 
     const response = await generateContentWithRetry(ai, {
-      model: "gemini-3.1-flash-lite",
+      model: "gemini-2.5-flash",
       contents: userPrompt,
       config: {
         systemInstruction: SYSTEM_INSTRUCTION,
@@ -148,18 +194,17 @@ Work history: ${JSON.stringify(profile.workExperience)}`;
     });
 
     if (!response.text) {
-      return { success: false, error: "Gemini returned no research result." };
+      throw new Error("Gemini returned no research result.");
     }
 
     const parsed = companyDossierSchema.safeParse(JSON.parse(response.text));
     if (!parsed.success) {
-      console.error("[agent/research]", parsed.error);
-      return { success: false, error: "Could not parse research result." };
+      throw new Error(`Could not parse research result: ${parsed.error.message}`);
     }
 
-    return { success: true, dossier: parsed.data };
+    return { success: true, dossier: parsed.data, degraded: false };
   } catch (error) {
     await logAgentError(insforge, runId, userId, job.id, error);
-    return { success: false, error: String(error) };
+    return { success: true, dossier: buildFallbackDossier(job, profile), degraded: true };
   }
 }

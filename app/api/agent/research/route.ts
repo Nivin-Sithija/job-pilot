@@ -4,7 +4,14 @@ import { z } from "zod";
 import { createInsforgeServer } from "@/lib/insforge-server";
 import { getPostHogClient } from "@/lib/posthog-server";
 import { EMPTY_PROFILE, rowToProfile, type ProfileRow } from "@/lib/profile";
+import { checkRateLimit } from "@/lib/rate-limit";
 import { researchCompany } from "@/agent/research";
+
+// One research run can burn 3-4 Gemini calls in quick succession (homepage extract + up to
+// 3 sub-page act/extract pairs + synthesis) plus a full headless Chromium launch — capped
+// tighter than Find Jobs because of that cost, and because the free-tier Gemini key has
+// already hit its 5 req/min ceiling once during testing (see progress-tracker.md).
+const RESEARCH_RATE_LIMIT = { maxRequests: 3, windowMs: 5 * 60 * 1000 };
 
 const researchBodySchema = z.object({
   jobId: z.string().uuid(),
@@ -27,6 +34,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: "Not authenticated" }, { status: 401 });
     }
     const userId = authData.user.id;
+
+    const rateLimit = checkRateLimit(`research:${userId}`, RESEARCH_RATE_LIMIT.maxRequests, RESEARCH_RATE_LIMIT.windowMs);
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        { success: false, error: `Too many research requests. Try again in ${rateLimit.retryAfterSeconds}s.` },
+        { status: 429, headers: { "Retry-After": String(rateLimit.retryAfterSeconds) } },
+      );
+    }
 
     const parsedBody = researchBodySchema.safeParse(await req.json());
     if (!parsedBody.success) {
@@ -91,21 +106,17 @@ export async function POST(req: NextRequest) {
       insforge,
     );
 
+    // Always "completed" — agent_runs.status has a DB CHECK constraint limited to
+    // running/completed/failed (see architecture.md), and a dossier was always produced
+    // here even in the degraded case. `result.degraded` is carried in the response instead.
     await insforge.database
       .from("agent_runs")
       .update({
-        status: result.success ? "completed" : "failed",
+        status: "completed",
         completed_at: new Date().toISOString(),
       })
       .eq("id", runId)
       .eq("user_id", userId);
-
-    if (!result.success) {
-      return NextResponse.json(
-        { success: false, error: "Company research failed. Please try again." },
-        { status: 500 },
-      );
-    }
 
     const { error: updateError } = await insforge.database
       .from("jobs")
@@ -127,7 +138,10 @@ export async function POST(req: NextRequest) {
       properties: { userId, jobId, company: job.company },
     });
 
-    return NextResponse.json({ success: true, data: { dossier: result.dossier } });
+    return NextResponse.json({
+      success: true,
+      data: { dossier: result.dossier, degraded: result.degraded },
+    });
   } catch (error) {
     console.error("[agent/research]", error);
     return NextResponse.json(

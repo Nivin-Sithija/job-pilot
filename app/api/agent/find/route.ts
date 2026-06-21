@@ -4,12 +4,18 @@ import { z } from "zod";
 import { createInsforgeServer } from "@/lib/insforge-server";
 import { getPostHogClient } from "@/lib/posthog-server";
 import { EMPTY_PROFILE, rowToProfile, type ProfileRow } from "@/lib/profile";
+import { checkRateLimit } from "@/lib/rate-limit";
 import { discoverJobs } from "@/agent/itpro";
 
 const findJobsBodySchema = z.object({
   jobTitle: z.string().min(1),
   location: z.string(),
 });
+
+// Scoring runs sequentially against Gemini (one call per job, up to MAX_JOBS_PER_RUN), so a
+// burst of searches in a short window can still queue dozens of calls — capped looser than
+// Research since it has no browser-automation cost, but still bounded.
+const FIND_JOBS_RATE_LIMIT = { maxRequests: 5, windowMs: 5 * 60 * 1000 };
 
 export async function POST(req: NextRequest) {
   try {
@@ -19,6 +25,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: "Not authenticated" }, { status: 401 });
     }
     const userId = authData.user.id;
+
+    const rateLimit = checkRateLimit(`find:${userId}`, FIND_JOBS_RATE_LIMIT.maxRequests, FIND_JOBS_RATE_LIMIT.windowMs);
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        { success: false, error: `Too many search requests. Try again in ${rateLimit.retryAfterSeconds}s.` },
+        { status: 429, headers: { "Retry-After": String(rateLimit.retryAfterSeconds) } },
+      );
+    }
 
     const parsedBody = findJobsBodySchema.safeParse(await req.json());
     if (!parsedBody.success) {

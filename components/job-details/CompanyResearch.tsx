@@ -44,6 +44,7 @@ export function CompanyResearch({ jobId, company, initialDossier }: CompanyResea
   const [dossier, setDossier] = useState<CompanyDossier | null>(initialDossier);
   const [isResearching, setIsResearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [degraded, setDegraded] = useState(false);
 
   async function handleResearch(): Promise<void> {
     setIsResearching(true);
@@ -53,11 +54,15 @@ export function CompanyResearch({ jobId, company, initialDossier }: CompanyResea
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ jobId }),
       });
-      const result: { success: boolean; data?: { dossier: CompanyDossier }; error?: string } =
-        await response.json();
+      const result: {
+        success: boolean;
+        data?: { dossier: CompanyDossier; degraded: boolean };
+        error?: string;
+      } = await response.json();
 
       if (result.success && result.data) {
         setDossier(result.data.dossier);
+        setDegraded(result.data.degraded);
       } else {
         setError(result.error ?? "Company research failed. Please try again.");
       }
@@ -88,6 +93,13 @@ export function CompanyResearch({ jobId, company, initialDossier }: CompanyResea
 
       {dossier ? (
         <div className="flex flex-col gap-5">
+          {degraded && (
+            <p className="rounded-md bg-warning/10 px-3 py-2 text-xs text-warning">
+              Limited research this time — AI synthesis didn&apos;t complete, so this dossier is
+              built from the job posting and your profile only. Try &quot;Research Again&quot;
+              later for the full version.
+            </p>
+          )}
           <div className="flex flex-col gap-1.5">
             <p className="text-xs font-medium uppercase text-text-secondary">Company Overview</p>
             <p className="text-sm text-text-secondary">{dossier.companyOverview}</p>

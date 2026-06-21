@@ -6,9 +6,9 @@ Update this file after every completed feature. Any AI agent reading this should
 
 ## Current Status
 
-**Phase:** Phase 5 — Dashboard (complete)
-**Last completed:** 17 Analytics Charts — PostHog Data
-**Next:** None — all 17 features built
+**Phase:** Phase 5 — Dashboard (complete) + post-launch hardening
+**Last completed:** Production hardening pass (model fix, fallback dossier, rate limiting, SSRF guard, security headers) — Docker/CI-CD/hosting in progress
+**Next:** Dockerfile + docker-compose, GitHub Actions CI/CD, new `deploy` skill, then a real DigitalOcean smoke-test deploy
 
 ---
 
@@ -186,6 +186,12 @@ Update this file after every completed feature. Any AI agent reading this should
 
 ## Notes
 
+- **Post-launch hardening pass found and fixed during `/review` + `/architect` (2026-06-21)**: `/review` (run against the uncommitted Phase 4/5 work — Job Details, Company Research Agent, Dashboard real data) found two real bugs in `agent/research.ts`, both now fixed:
+  - `agent/research.ts`'s Gemini synthesis call used `"gemini-3.1-flash-lite"` — not the project's standard `"gemini-2.5-flash"`, and not a model used anywhere else in the codebase. Likely would have repeated the exact `gemini-3.5-flash` failure mode from Feature 07 (a wrong/unavailable model string fails as a generic capacity error, not an obvious "model not found"). Fixed to `"gemini-2.5-flash"`.
+  - `researchCompany()` violated architecture.md's "always return a dossier, never return empty" invariant on the one path it didn't actually cover: if the Gemini *synthesis* call itself failed (as opposed to just the browser-research phase), it returned `{success: false}` with no dossier at all. Fixed with a new `buildFallbackDossier()` — a deterministic, non-AI dossier built from already-known `job`/`profile` fields — so `researchCompany()` now always returns `{success: true, dossier, degraded}`. `degraded: true` is surfaced to the client and shown as a small inline notice in `CompanyResearch.tsx`, not persisted to the DB (no new column added for this).
+  - `app/api/agent/research/route.ts` updated accordingly: `agent_runs.status` is always `"completed"` now (never `"failed"` from this code path) since a dossier is always produced — a new `"completed_degraded"` status was considered and rejected because `agent_runs.status` has a DB `CHECK` constraint limited to `running`/`completed`/`failed` (see architecture.md's InsForge Database Schema), and adding a new enum value would need an actual schema migration, out of scope for this fix.
+  - Also added, per the same review's security findings: `lib/rate-limit.ts` (in-memory per-user sliding window, applied to `/api/agent/find` and `/api/agent/research`), `lib/url-safety.ts` (SSRF guard — `isPrivateOrLocalUrl()` checked before Stagehand's `page.goto()`, since `job.website` is third-party ITPro.lk data), and security headers (CSP/X-Frame-Options/etc.) in `next.config.ts`.
+- **Hosting decided (2026-06-21), before any Docker/CI-CD work was written**: single DigitalOcean droplet running the whole Next.js app in one Docker container (Caddy in front for auto-HTTPS), not a Vercel-plus-DigitalOcean split — chosen over splitting because Stagehand LOCAL's persistent-Chromium requirement is the only thing that can't run on Vercel serverless, and a full split (Vercel for everything else + a separate DO microservice just for that) adds a cross-service network hop/auth surface for marginal benefit. InsForge stays on its managed cloud — no self-host migration. CI "testing" = typecheck + lint + build, since no test framework exists in this repo yet. GHCR chosen over DigitalOcean Container Registry (free, no extra account). See architecture.md's new Hosting section for the full reasoning.
 - **Job discovery source swapped from Adzuna to ITPro.lk** (2026-06-18, before Feature 10 was built): Adzuna does not cover the Sri Lankan job market. Verified directly — `GET https://itpro.lk/api/v1/jobs` is a real, free, no-auth-required public endpoint returning live Sri Lankan tech job postings. Tradeoff: it has no server-side search (page/q/keyword/search/title params are all ignored, confirmed by testing), so Feature 10 now fetches a batch (`limit=100`) and filters by jobTitle/location client-side. Its `location`/`category_id`/`type_id` fields are opaque numeric IDs with no public lookup endpoint, so the jobs table's `location` column will be `null` for ITPro.lk-sourced jobs until/unless a manual ID→label mapping is built. Also checked the topjobs.lk "API" found on Postman documenter (`UyxjEkH1`) — it's an unofficial third-party clone project with a hardcoded admin password, not real topjobs.lk data, so it was rejected. Updated `architecture.md`, `library-docs.md`, `code-standards.md`, `project-overview.md`, and `build-plan.md` to match.
 
 _Add notes here as the build progresses — workarounds, patterns, anything that differs from the context files._

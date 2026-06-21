@@ -7,6 +7,13 @@ export function createLocalStagehand(): Stagehand {
   return new Stagehand({
     env: "LOCAL",
     model: { modelName: "google/gemini-2.5-flash", apiKey: process.env.GEMINI_API_KEY! },
-    localBrowserLaunchOptions: { headless: true },
+    localBrowserLaunchOptions: {
+      headless: true,
+      // The deployed container runs Chromium as root with no extra Docker capabilities
+      // (no --cap-add=SYS_ADMIN, no custom seccomp profile) — Chromium's own setuid sandbox
+      // needs one of those to work, so it's disabled here. The container boundary is the
+      // sandbox in this deployment, same tradeoff Puppeteer's own Docker docs document.
+      args: ["--no-sandbox", "--disable-setuid-sandbox"],
+    },
   });
 }

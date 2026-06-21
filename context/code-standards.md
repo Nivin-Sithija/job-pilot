@@ -127,6 +127,7 @@ export async function POST(req: NextRequest) {
 - Errors are logged with the route path as prefix: `[agent/find]`
 - Always return `{ success: boolean, data?: T, error?: string }`
 - Never return raw data without the success wrapper
+- Any route that triggers expensive agent work (Gemini calls, Stagehand/browser automation) calls `checkRateLimit()` from `lib/rate-limit.ts` immediately after the auth check, keyed by `` `${routeName}:${userId}` ``, before any DB or agent work runs. Returns `429` with a `Retry-After` header on rejection. Currently applied to `/api/agent/find` and `/api/agent/research` — apply to any future agent-triggering route too.
 
 ---
 
@@ -218,6 +219,14 @@ const insforge = await createInsforgeServer();
 
 ---
 
+## Security Practices
+
+- **Security headers** are set globally in `next.config.ts`'s `headers()` (CSP, `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`) — never add a per-route header workaround instead of extending the shared `securityHeaders` array there. `connect-src` in the CSP must list every third-party origin the *browser* talks to directly (InsForge, PostHog) — server-only origins (Gemini, PostHog Query API) don't need to be listed since the browser never calls them directly.
+- **SSRF guard on agent-driven browser navigation**: any code that points Stagehand's browser at a URL derived from third-party data (currently `agent/research.ts`'s `deriveHomepageUrl(job.website, ...)`) must check it with `isPrivateOrLocalUrl()` (`lib/url-safety.ts`) first and refuse to navigate (log via `logAgentError`, degrade gracefully) if it resolves to a private/local address.
+- **Rate limiting** — see the API Route Handlers section above.
+
+---
+
 ## PostHog Events
 
 All PostHog events must use these exact event names. Never invent new event names without adding them here first.
@@ -287,7 +296,9 @@ Import and use `MATCH_THRESHOLD` everywhere this value is needed.
 
 ## Shared Gemini Retry Helper
 
-Every Gemini call in the project goes through `generateContentWithRetry()` in `lib/gemini.ts` (3 attempts, backoff on `429`/`503`) — never call `ai.models.generateContent()` directly. `lib/resume.ts` and `agent/matcher.ts` both import it; `agent/research.ts`/`agent/extractor.ts` should too when built.
+Every Gemini call in the project goes through `generateContentWithRetry()` in `lib/gemini.ts` (3 attempts, backoff on `429`/`503`) — never call `ai.models.generateContent()` directly. `lib/resume.ts`, `agent/matcher.ts`, and `agent/research.ts` all import it.
+
+The literal model string is always `"gemini-2.5-flash"` (or `"google/gemini-2.5-flash"` for Stagehand's `modelName` config) — copy it from an existing call site (`agent/matcher.ts`, `lib/resume.ts`, `lib/stagehand.ts`) rather than typing it from memory. A wrong or unavailable model string doesn't fail loudly — it comes back as a generic capacity/quota-shaped error, which already cost real debugging time twice in this project (see `progress-tracker.md`'s Notes on the `gemini-3.5-flash` → `gemini-2.5-flash` switch, and again when `agent/research.ts` briefly used `gemini-3.1-flash-lite`).
 
 ---
 

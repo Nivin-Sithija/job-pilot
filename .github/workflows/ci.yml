@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    # Dummy values — next build only needs these vars to exist (they get inlined into the
+    # client bundle for NEXT_PUBLIC_*); it doesn't call any of these services at build time.
+    env:
+      NEXT_PUBLIC_INSFORGE_URL: https://placeholder.insforge.app
+      NEXT_PUBLIC_INSFORGE_ANON_KEY: placeholder
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: placeholder
+      NEXT_PUBLIC_POSTHOG_HOST: https://us.i.posthog.com
+      GEMINI_API_KEY: placeholder
+      POSTHOG_API_HOST: https://us.posthog.com
+      POSTHOG_PERSONAL_API_KEY: placeholder
+      POSTHOG_PROJECT_ID: placeholder
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Lint
+        run: npx eslint .
+
+      - name: Build
+        run: npm run build

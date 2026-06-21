@@ -117,6 +117,8 @@
 │   ├── resume-pdf.tsx                     → @react-pdf/renderer <Document> component — server-only, used only by app/api/resume/generate
 │   ├── gemini.ts                          → generateContentWithRetry() — shared by every Gemini call in the project
 │   ├── dashboard.ts                       → getStatsBarData() (Feature 15), getRecentActivity() (Feature 16) — real Dashboard DB queries
+│   ├── rate-limit.ts                      → checkRateLimit() — in-memory sliding window, valid only because the app runs as a single Node process (see Hosting)
+│   ├── url-safety.ts                      → isPrivateOrLocalUrl() — SSRF guard checked before Stagehand navigates to any company.website-derived URL
 │   └── utils.ts                           → MATCH_THRESHOLD, MAX_JOBS_PER_RUN, formatRelativeTime()
 └── types/
     └── index.ts                           → Global TypeScript types
@@ -442,6 +444,20 @@ await stagehand.close();
 
 ---
 
+## Hosting
+
+**Single droplet, not split frontend/backend** — decided because Stagehand LOCAL needs a persistent Node process with Chromium on disk at request time, which vanilla Vercel serverless functions can't provide. Rather than splitting the app (Vercel for everything except a separate Stagehand microservice on DigitalOcean), the whole Next.js app — pages, all API routes, Server Actions, Stagehand — runs as one Docker container on one DigitalOcean droplet. Simpler ops, one bill, no cross-service network hop/auth between a Vercel function and a DO microservice.
+
+- **Container**: single multi-stage `Dockerfile`, built from Playwright's official base image for the runtime stage (ships Chromium's system dependencies already installed — avoids hand-rolling the apt-get list Playwright needs).
+- **Reverse proxy**: Caddy, not Nginx+certbot — automatic HTTPS with zero manual certificate management once a real domain points at the droplet; serves plain HTTP off the bare IP until then.
+- **Registry**: GitHub Container Registry (GHCR), not DigitalOcean Container Registry — free, and CI already has a `GITHUB_TOKEN` with no extra account to wire up.
+- **InsForge stays on its managed cloud** (`*.insforge.app`) — no self-hosting. Revisit only if its free tier's limits actually become a problem.
+- **Rate limiting is in-memory** (`lib/rate-limit.ts`) — valid specifically because this is one droplet running one Node process. The moment this runs as more than one instance (horizontal scaling, multiple droplets), it needs a shared store (e.g. Redis) instead.
+- **CI "testing"** = `tsc --noEmit` + `eslint` + `next build` on every PR/push — there is no test framework installed in this project; do not assume Jest/Vitest/Playwright-test exist without checking `package.json` first.
+- `NEXT_PUBLIC_APP_URL` is `http://localhost:3000` in `.env.local` — there is no production domain yet. OAuth redirect URIs (Google/GitHub) and InsForge's allowed redirect URLs are configured for `localhost`, so a real domain + DNS + OAuth config update is required before login works on the deployed droplet.
+
+---
+
 ## Invariants
 
 Rules the AI agent must never violate:
@@ -452,8 +468,11 @@ Rules the AI agent must never violate:
 - All InsForge server-side writes use `createInsforgeServer()` — never the browser client.
 - No hardcoded hex values or raw Tailwind color classes in components — use CSS variables from ui-tokens.md.
 - Every Stagehand action is wrapped in try/catch. Failures are logged to agent_logs, never thrown to crash the run.
-- Company research always returns a dossier — even if browser research fails, Gemini 2.5 Flash synthesizes from company name and job description alone. Never return empty.
+- Company research always returns a dossier — even if browser research fails, Gemini 2.5 Flash synthesizes from company name and job description alone. If the Gemini synthesis call itself fails (not just the browser phase), `agent/research.ts`'s `buildFallbackDossier()` returns a deterministic, non-AI dossier from already-known job/profile data instead — `researchCompany()` never returns `success: false`, only `degraded: true`. Never return empty.
 - Browserbase sessions are always closed with stagehand.close() when done — never leave sessions open.
 - Always scope InsForge queries to the current user_id — never query without a user filter.
 - ITPro.lk API has no server-side search — `jobTitle`/`location` filtering always happens client-side on the fetched batch, never assume the API filtered it.
 - jobs.source is always 'search' or 'url' — never any other value.
+- Every Gemini call in `agent/`/`lib/` uses the literal model string `"gemini-2.5-flash"` (or `"google/gemini-2.5-flash"` for Stagehand's `modelName`) — never a different model name without updating this file first. A wrong/unavailable model string fails silently as a generic capacity error, not an obvious "model not found" — this has happened twice already (see Notes).
+- `agent/research.ts` validates `deriveHomepageUrl()`'s result with `isPrivateOrLocalUrl()` (`lib/url-safety.ts`) before every `page.goto()` — `job.website` is third-party ITPro.lk data, not something we control, so Stagehand's browser must never be pointed at localhost/private/link-local addresses.
+- `/api/agent/find` and `/api/agent/research` are rate limited per user via `checkRateLimit()` (`lib/rate-limit.ts`) — both run expensive Gemini/browser-automation work against a quota-limited key.

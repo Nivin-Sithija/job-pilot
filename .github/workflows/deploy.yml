@@ -1,0 +1,65 @@
+name: Deploy
+
+# Runs only after CI's checks would pass on main (push trigger), never on a PR — this builds
+# and ships a real image to the droplet, not something to run against unreviewed code.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        id: meta
+        run: |
+          IMAGE="${REGISTRY}/${IMAGE_NAME}:${{ github.sha }}"
+          IMAGE_LATEST="${REGISTRY}/${IMAGE_NAME}:latest"
+          docker build -t "$IMAGE" -t "$IMAGE_LATEST" .
+          docker push "$IMAGE"
+          docker push "$IMAGE_LATEST"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      # Requires repo secrets: DROPLET_HOST, DROPLET_USER, DROPLET_SSH_KEY.
+      # The droplet must already have docker-compose.yml/Caddyfile/.env.production in
+      # DROPLET_APP_DIR (see .claude/skills/deploy for the one-time droplet setup steps) —
+      # this workflow only pulls the new image and restarts, it doesn't provision anything.
+      - name: SSH deploy
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DROPLET_HOST }}
+          username: ${{ secrets.DROPLET_USER }}
+          key: ${{ secrets.DROPLET_SSH_KEY }}
+          envs: IMAGE
+          script: |
+            set -e
+            cd "${DROPLET_APP_DIR:-/opt/job-pilot}"
+            export IMAGE="${{ needs.build-and-push.outputs.image }}"
+            echo "IMAGE=$IMAGE" > .image-env
+            docker compose --env-file .image-env pull app
+            docker compose --env-file .image-env up -d
+            docker image prune -f
