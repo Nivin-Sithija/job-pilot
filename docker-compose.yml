@@ -22,9 +22,11 @@ services:
       - caddy_data:/data
       - caddy_config:/config
     environment:
-      # No domain set yet (see context/architecture.md's Hosting section) — Caddy serves
-      # plain HTTP on the bare droplet IP. Set DOMAIN=yourdomain.com in .env.production once
-      # DNS points at this droplet and Caddy will provision a real cert automatically.
+      # DOMAIN is set in .env.production to a free nip.io hostname (64.227.162.172.nip.io,
+      # resolves to the droplet IP) so Caddy provisions a real Let's Encrypt cert with no
+      # purchased domain — see context/architecture.md's Hosting section. Falls back to :80
+      # (plain HTTP, no cert) only if DOMAIN is unset. Swap in a real domain later, nothing
+      # else changes. The deploy workflow `source`s .env.production so this interpolates.
       - DOMAIN=${DOMAIN:-:80}
     depends_on:
       - app
