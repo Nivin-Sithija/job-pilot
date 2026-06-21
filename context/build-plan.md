@@ -191,8 +191,9 @@ Agent calls the ITPro.lk public API to find Sri Lankan tech jobs, scores them ag
   - The API ignores search/filter query params (`page`, `q`, `keyword`, `search`, `title` are all no-ops, confirmed by testing) — it always returns the same "recent jobs" feed, so all filtering happens client-side after the fetch
   - Filter the returned batch: keep jobs whose title or description contains the user's jobTitle (case insensitive substring match). If location is provided, additionally keep jobs whose description mentions it — the API's `location` field is an opaque numeric ID with no public ID→name lookup endpoint, so it cannot be matched directly
 - For each job kept after filtering:
-  - Extract title, company, location, description (strip HTML tags), website
-  - Construct source_url/external_apply_url as `https://itpro.lk/jobs/{id}` — there is no redirect_url field, link back to the listing on ITPro.lk itself
+  - Extract title, company, description (strip HTML tags), website
+  - Derive location and job_type via `parseLocationAndJobType(job.summary)` — `job.location`/`job.type_id` are opaque ids with no public lookup, but `summary` reliably embeds both as plain text ("Join {company} as a {title} in {location}, {jobType}. Apply now on ITPro.lk. ...")
+  - Construct source_url/external_apply_url via `buildJobUrl(id)` → `https://itpro.lk/job/{id}/` (singular `/job/`, trailing slash) — there is no redirect_url field, link back to the listing on ITPro.lk itself. **Not** `https://itpro.lk/jobs/{id}` (plural, no trailing slash) — that 302-redirects to ITPro's own page-unavailable route, confirmed by curling it directly
   - Gemini 2.5 Flash scores job against user profile:
     - matchScore — integer 0-100
     - matchReason — one paragraph explanation
@@ -247,7 +248,7 @@ Build the complete job details page UI. Job data from DB is already available fr
 
 # Feature 13 — Company Research Agent (Updated)
 
-Agent researches the company using their public website and builds a structured dossier using a single Browserbase session. Three data sources fused together: company website content, job description from DB, user profile from DB.
+Agent researches the company using their public website and builds a structured dossier using a single local Stagehand session (Playwright Chromium — no cloud account). Three data sources fused together: company website content, job description from DB, user profile from DB.
 
 **Logic:**
 
@@ -258,14 +259,13 @@ Agent researches the company using their public website and builds a structured 
   - If `job.website` is present — use it directly as the homepage URL (strip any path/subdomain down to the root domain if it points at a careers subpage)
   - If `job.website` is empty (it's blank on roughly a third of listings, confirmed by sampling the API) — fall back to https://www.{company}.com (company name from DB)
   - If Stagehand gets no meaningful content (oneLiner and productSummary empty) — skip browser research entirely, proceed to Gemini 2.5 Flash synthesis with job description and profile only
-- Open single Browserbase session with Stagehand
+- Open local Stagehand session (Playwright Chromium, no cloud account)
   **Stagehand homepage extraction:**
 
 ```typescript
-const homepage = await stagehand.extract({
-  instruction:
-    "This is a company's homepage. Capture what the company actually does, who it's for, and any concrete signals (funding, customers, scale, mission, recent launches). Then find the internal links most worth visiting to research them as an employer.",
-  schema: z.object({
+const homepage = await stagehand.extract(
+  "This is a company's homepage. Capture what the company actually does, who it's for, and any concrete signals (funding, customers, scale, mission, recent launches). Then find the internal links most worth visiting to research them as an employer, returning each link's exact visible text label (e.g. 'About Us', 'Careers') so it can be clicked later.",
+  z.object({
     oneLiner: z.string().describe("What the company does in one sentence"),
     productSummary: z
       .string()
@@ -276,7 +276,7 @@ const homepage = await stagehand.extract({
     pageLinks: z
       .array(
         z.object({
-          url: z.string(),
+          label: z.string().describe("The link's visible text, exactly as shown on the page"),
           kind: z.enum([
             "about",
             "careers",
@@ -290,18 +290,23 @@ const homepage = await stagehand.extract({
       )
       .describe("Internal links worth visiting"),
   }),
-});
+);
 ```
 
 If oneLiner and productSummary are empty — bail to synthesis with job description and profile only.
 
-**Stagehand sub-page extraction (max 3 pages — prefer about/blog/engineering/product over careers):**
+**Stagehand sub-page navigation + extraction (max 3 pages — prefer about/blog/engineering/product over careers):**
+
+Confirmed in practice: asking `extract()` to return a link's href is unreliable — the model can echo internal snapshot node references or the visible label instead of a real URL. Navigate by clicking the visible label with `act()` instead, then read the real landed URL off the page:
 
 ```typescript
-const page = await stagehand.extract({
-  instruction:
-    "Extract substance that helps a candidate understand this company before applying: what they do, their values and how they work, the specific technologies and tools they use, notable projects or customers, and how the team operates. Ignore nav, footers, cookie banners, and generic marketing copy.",
-  schema: z.object({
+await page.goto(homepageUrl); // reset before each click attempt
+const clickResult = await stagehand.act(`Click the "${link.label}" link`);
+if (!clickResult.success) continue; // skip this link, try the next preferred kind
+
+const subPage = await stagehand.extract(
+  "Extract substance that helps a candidate understand this company before applying: what they do, their values and how they work, the specific technologies and tools they use, notable projects or customers, and how the team operates. Ignore nav, footers, cookie banners, and generic marketing copy.",
+  z.object({
     keyPoints: z.array(z.string()),
     technologies: z
       .array(z.string())
@@ -313,10 +318,11 @@ const page = await stagehand.extract({
       .array(z.string())
       .describe("Customers, funding, scale, projects, awards"),
   }),
-});
+);
+const visitedUrl = page.url(); // real landed URL, feeds the dossier's sources field
 ```
 
-- Close Browserbase session after homepage + max 3 sub-pages
+- Close Stagehand session after homepage + max 3 sub-pages
   **Gemini 2.5 Flash synthesis (runs after browser closes):**
 
 System prompt:
@@ -392,15 +398,18 @@ The Company Research card on the job details page must render all 9 fields:
 
 ### 14 Dashboard Page — Full UI
 
-Build the complete dashboard UI with mock data.
+Build the complete dashboard UI with mock data. Source of truth is `context/designs/dashboard.png` and `project-overview.md` — corrected in Feature 14 since this section originally described a "Cover Letters Generated" stat and "Resume Tailoring Activity" chart, neither of which match the design and both of which reference out-of-scope features (no cover letter generation, no resume tailoring per `project-overview.md`'s Features Out of Scope list).
+
 **UI:**
 
-- Four stat cards: Total Jobs Found, Avg. Match Rate, Companies Researched, Cover Letters Generated — all showing mock numbers with trend indicators
-- Recent Activity card — list of 5 activity entries with colored dots and timestamps
-- Resume Tailoring Activity — bar chart (mock data, days of week)
-- Jobs Found Over Time — line chart (mock data, days of week)
+- Four stat cards: Total Jobs Found, Avg. Match Rate, Companies Researched, Jobs This Week — all showing mock numbers; the first two have a green trend pill ("+12% vs last week"), the other two show plain muted subtitle text ("Total researched"/"New this week")
+- Recent Activity card — list of 5 activity entries with colored dots and timestamps (job found = success green, company researched = accent purple, per `ui-tokens.md`'s Activity Dots table)
+- Company Research Activity — bar chart (mock data, days of week)
+- Jobs Found Over Time — line/area chart with gradient fill (mock data, days of week)
 - Match Score Distribution — bar chart (mock data, score ranges 50-60%, 60-70%, 70-80%, 80-90%, 90-100%)
-- Incomplete profile banner at top if profile not complete
+- Incomplete profile banner at top if profile not complete — wired to the real `calculateProfileCompletion()` check against the DB (not mocked, since that data and function already exist from Feature 06 at zero extra cost)
+- Charts built with `recharts` (added to the approved dependency list in `code-standards.md`) so Feature 17 only swaps the data source, no chart rebuild
+- Dashboard layout uses a flex/grid-stretch structure (`flex-1` main + `content-stretch` grid) so the page always fills exactly one viewport without scrolling, whether or not the incomplete-profile banner is showing
 
 ---
 
@@ -414,6 +423,7 @@ Wire four stat cards to real InsForge DB data for current user.
 - Avg. Match Rate — AVG of match_score across all user jobs
 - Companies Researched — COUNT of jobs where company_research IS NOT NULL and user_id = current user
 - Jobs This Week — COUNT of jobs found in last 7 days
+- Implemented in `lib/dashboard.ts` (`getStatsBarData`), queried in parallel via `Promise.all`; counts use `head: true` count-only queries (no row data fetched), avg is computed client-side since the SDK exposes no `avg()` aggregate. Mock UI's trend pills ("+12%"/"+3%") dropped in favor of plain subtitle text for all four cards — no week-over-week comparison was specified and there's no historical snapshot to diff against.
 
 ---
 
@@ -423,13 +433,14 @@ Wire recent activity list to real InsForge DB data for current user.
 
 **Logic:**
 
-- Query agent_runs table — most recent runs for current user
-- Query jobs table — most recent company research entries for current user
-- Merge and sort all by created_at descending — take last 5-10 entries
+- Query agent_runs table — most recent completed runs with job_title_searched set (excludes company-research runs, which also write to agent_runs but with job_title_searched null) for current user
+- Query jobs table — most recent rows with researched_at set, for current user
+- Merge and sort all by timestamp descending — take last 5 entries
 - Format each into human readable string:
-  - agent_run completed → "Found X jobs for [jobTitle] — [time ago]"
-  - company_research populated → "Researched [company] — [time ago]"
-- Color coded dot per entry type — info blue, success green
+  - agent_run completed → "Found X jobs for [jobTitle]" — timestamp via formatRelativeTime(completed_at ?? started_at)
+  - company_research populated → "Researched [company]" — timestamp via formatRelativeTime(researched_at)
+- Color coded dot per entry type — success green (job found) / accent purple (company researched), per ui-tokens.md's Activity Dots table (corrected in Feature 14; this section's original "info blue" note was stale)
+- Implemented in `lib/dashboard.ts` (`getRecentActivity`). Required adding a nullable `researched_at timestamptz` column to `jobs` via ad-hoc `run-raw-sql` (same no-migrations-folder precedent as Feature 13's `website` column) — `found_at` only captures discovery time, not when research completed, so there was no existing timestamp to query against. `app/api/agent/research/route.ts` now sets `researched_at` alongside `company_research` on save.
 
 ---
 

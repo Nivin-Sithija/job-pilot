@@ -155,20 +155,20 @@ Used for: primary buttons, active nav items, match score bars, tailored badge, f
 
 ### Match Score Colors
 
-Match score bars and indicators use gradient stops based on score range — verified directly against `context/designs/find-jobs.png` (Vercel 94%/Linear 96%/OpenAI 91% green, Stripe 88%/Figma 85% blue, Notion 72% orange):
+Match score bars and indicators use gradient stops based on score range — corrected by the developer after the design-derived thresholds below (originally 90/80) felt too strict in practice:
 
-| Score Range | Color  | Token          |
-| ----------- | ------ | -------------- |
-| 90-100%     | Green  | `text-success` |
-| 80-89%      | Blue   | `text-info`    |
-| Below 80%   | Orange | `text-warning` |
+| Score Range  | Color  | Token          |
+| ------------ | ------ | -------------- |
+| Above 80%    | Green  | `text-success` |
+| 70-80%       | Blue   | `text-info`    |
+| Below 70%    | Orange | `text-warning` |
 
 ### Skills Badges
 
 | Type          | Background            | Text                      |
 | ------------- | --------------------- | ------------------------- |
 | Matched skill | `bg-success-lightest` | `text-success-foreground` |
-| Missing skill | `bg-accent-muted`     | `text-accent`             |
+| Missing skill | `bg-warning/10`       | `text-warning`            |
 
 ### Source Badges
 
@@ -310,13 +310,12 @@ font-weight: 500
 
 ### Activity Dots
 
-Each activity type has a specific dot color:
+Each activity type has a specific dot color — corrected in Feature 14 to the project's actual two Recent Activity types (`agent_runs`/job discovery and company research; resume tailoring and cover letters are out of scope per `project-overview.md`):
 | Activity Type | Outer ring | Inner dot |
 |---|---|---|
-| Resume tailored | `#F3E8FF` (accent-light) | `#7C5CFC` (accent) |
-| Cover letter | `#DBEAFE` (info-light) | `#61A8FF` (info) |
 | Job found | `#D0FAE5` (success-light) | `#00BC7D` (success-alt) |
-Dot size: 8px inner, 16px outer with white border
+| Company researched | `#F3E8FF` (accent-light) | `#7C5CFC` (accent) |
+Dot size: 8px inner, 16px outer with white border (`h-4 w-4` outer / `h-2 w-2` inner in Tailwind)
 
 ### Dashboard Chart Colors
 
@@ -344,6 +343,6 @@ size: 36x36px
 - Font is Inter — always import via next/font/google, never use a fallback system font
 - Never use raw Tailwind color classes like `bg-purple-500` or `text-gray-600` — use project tokens only
 - `--accent` (#7C5CFC) is the only purple — never use Tailwind's built-in purple scale
-- Match score bars always use color tokens based on score range (90-100% green, 80-89% blue, below 80% orange) — never hardcoded colors
+- Match score bars always use color tokens based on score range (above 80% green, 70-80% blue, below 70% orange) — never hardcoded colors
 - LinkedIn badge always uses `--linkedin` (#0A66C2) — never generic blue
 - All borders default to `--border` (#E7EAF3) — never use `border-gray-*`

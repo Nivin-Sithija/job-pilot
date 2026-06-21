@@ -1,4 +1,7 @@
+import Link from "next/link";
 import { Building2 } from "lucide-react";
+
+import { scoreColorClasses } from "@/lib/utils";
 
 export type Job = {
   id: string;
@@ -12,12 +15,6 @@ export type Job = {
 type JobsTableProps = {
   jobs: Job[];
 };
-
-function scoreColorClasses(score: number): { text: string; bar: string } {
-  if (score >= 90) return { text: "text-success", bar: "bg-success" };
-  if (score >= 80) return { text: "text-info", bar: "bg-info" };
-  return { text: "text-warning", bar: "bg-warning" };
-}
 
 export function JobsTable({ jobs }: JobsTableProps) {
   if (jobs.length === 0) {
@@ -59,9 +56,16 @@ export function JobsTable({ jobs }: JobsTableProps) {
             return (
               <tr
                 key={job.id}
-                className="border-b border-border last:border-b-0 hover:bg-surface-secondary"
+                className="relative cursor-pointer border-b border-border last:border-b-0 hover:bg-surface-secondary"
               >
                 <td className="px-6 py-4">
+                  {/* Nested inside the existing cell (not a sibling `<td>`) so it doesn't shift column count —
+                      positioned relative to the `relative` row above, covering the full row */}
+                  <Link
+                    href={`/find-jobs/${job.id}`}
+                    className="absolute inset-0"
+                    aria-label={`View ${job.role} at ${job.company}`}
+                  />
                   <div className="flex items-center gap-3">
                     <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-surface-secondary">
                       <Building2 className="h-4 w-4 text-text-muted" />

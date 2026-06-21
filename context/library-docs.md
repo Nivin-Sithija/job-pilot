@@ -261,7 +261,7 @@ type ITProJob = {
   summary: string;
   type_id: string; // opaque numeric id, no public lookup
   category_id: string; // opaque numeric id, no public lookup
-  location: string | null; // opaque numeric id, no public lookup
+  location: string | null; // opaque numeric id, no public lookup — use parseLocationAndJobType(summary) instead, not this field
   company: string;
   website: string | null;
   views_count: string;
@@ -269,21 +269,30 @@ type ITProJob = {
 };
 ```
 
+### Deriving Location, Job Type, and the Real Job URL
+
+`location`/`type_id` are opaque numeric ids with no public lookup endpoint, but every job's `summary` field reliably embeds both as plain text: `"Join {company} as a {title} in {location}, {jobType}. Apply now on ITPro.lk. ..."`. `lib/itpro.ts`'s `parseLocationAndJobType(summary)` extracts both, working backwards from the fixed `"Apply now on ITPro.lk."` suffix (last comma, then last `" in "`) so a job title containing a comma or the word "in" doesn't get misread as the location. Verified against 20 live jobs — 100% accurate, including "Remote" locations and non-`fulltime` types ("Internship").
+
+The job detail URL is **not** `https://itpro.lk/jobs/{id}` (plural, no slug) — that 302-redirects to ITPro's own `/page-unavailable/` page, confirmed by curling it directly. The real working pattern is `https://itpro.lk/job/{id}/` (singular `/job/`, trailing slash, no slug needed) — it 301-redirects straight to the correct slugged listing. `lib/itpro.ts`'s `buildJobUrl(id)` returns this.
+
 ### Saving Jobs to DB
 
 ```typescript
 // Map ITPro.lk result to jobs table
+const { location, jobType } = parseLocationAndJobType(job.summary);
+const jobUrl = buildJobUrl(job.id);
+
 const jobRecord = {
   user_id: userId,
   run_id: runId,
   source: "search", // always 'search' for ITPro.lk jobs
-  source_url: `https://itpro.lk/jobs/${job.id}`,
-  external_apply_url: `https://itpro.lk/jobs/${job.id}`,
+  source_url: jobUrl,
+  external_apply_url: jobUrl,
   title: job.title,
   company: job.company,
-  location: null, // numeric id only — no readable label to store
-  salary: null, // ITPro.lk does not return salary data
-  job_type: "fulltime", // not reliably derivable from type_id without a lookup
+  location, // parsed from job.summary — see parseLocationAndJobType below
+  salary: null, // ITPro.lk does not return salary data anywhere in the API
+  job_type: jobType, // parsed from job.summary, e.g. "Full-time" / "Internship" — not the fulltime/parttime/contract enum the schema doc originally assumed
   about_role: stripHtml(job.description),
   match_score: scoredJob.matchScore,
   match_reason: scoredJob.matchReason,
@@ -303,40 +312,20 @@ const jobRecord = {
 
 ---
 
-## Browserbase
-
-**Check first:** Check AGENTS.md for an installed Browserbase skill. If a Browserbase MCP server is configured — use it. The skill/MCP will have the latest session management and API patterns.
-
-### Session Creation — Company Research
-
-```typescript
-import Browserbase from "@browserbasehq/sdk";
-
-const bb = new Browserbase({ apiKey: process.env.BROWSERBASE_API_KEY! });
-
-// Single session for company research — sequential page visits
-const session = await bb.sessions.create({
-  projectId: process.env.BROWSERBASE_PROJECT_ID!,
-  timeout: 120, // 2 minute session — visits 3-4 pages max
-});
-```
-
-**Important — Browserbase runs independently from your Next.js server:**
-Browserbase sessions run on Browserbase's cloud infrastructure, not inside your Next.js API route. The API route triggers the Browserbase session and returns a response while the session continues running independently on Browserbase's platform. Do not add `maxDuration` or any timeout configuration to Next.js API routes to accommodate Browserbase session length.
-
-**Rules:**
-
-- Always use single sessions — never parallel sessions (free plan limit)
-- Session timeout is 120 seconds — sufficient for 3-4 page visits
-- Always end sessions cleanly — call stagehand.close() when done
-- Project ID always from `process.env.BROWSERBASE_PROJECT_ID` — never hardcode
-- Browserbase client lives in `lib/browserbase.ts` — always import from there
-
----
-
 ## Stagehand
 
 **Check first:** Check AGENTS.md for an installed Stagehand skill. If a Stagehand MCP server is configured — use it. The skill/MCP will have the latest act() and extract() patterns.
+
+Runs in `env: "LOCAL"` mode — a local Playwright-controlled Chromium, no Browserbase cloud account or API key needed. Same `act()`/`extract()`/`close()` API either way; only the init shape differs.
+
+### Local Setup (one-time)
+
+```bash
+npm install @browserbasehq/stagehand playwright
+npx playwright install chromium
+```
+
+Add `playwright` and `@browserbasehq/stagehand` to `next.config.ts`'s `serverExternalPackages` array (same reason as `pdf-parse`/`@napi-rs/canvas` — native bindings the bundler shouldn't touch).
 
 ### Initialisation
 
@@ -344,27 +333,28 @@ Browserbase sessions run on Browserbase's cloud infrastructure, not inside your 
 import { Stagehand } from "@browserbasehq/stagehand";
 
 const stagehand = new Stagehand({
-  env: "BROWSERBASE",
-  apiKey: process.env.BROWSERBASE_API_KEY!,
-  projectId: process.env.BROWSERBASE_PROJECT_ID!,
-  browserbaseSessionID: session.id,
+  env: "LOCAL",
   model: { modelName: "google/gemini-2.5-flash", apiKey: process.env.GEMINI_API_KEY! },
-  disablePino: true,
+  localBrowserLaunchOptions: { headless: true }, // mandatory for server contexts — never flip to false outside local debugging
 });
 
 await stagehand.init();
 const page = stagehand.context.activePage()!;
+await page.goto("https://example.com");
 ```
+
+Factory lives in `lib/stagehand.ts` (`createLocalStagehand()`) — always import from there, never construct `Stagehand` inline elsewhere. The factory only constructs; the caller owns `init()`/`close()`.
+
+Navigation happens via `page.goto(url)` (the `Page` object from `stagehand.context.activePage()`) — `act()`/`extract()` are called on `stagehand` itself and always operate on the active page, positionally: `stagehand.extract(instruction, zodSchema)`, not an options object.
 
 ### extract()
 
 ```typescript
 import { z } from "zod";
 
-const result = await stagehand.extract({
-  instruction:
-    "Extract the company overview, main product description, and any technology mentions from this page.",
-  schema: z.object({
+const result = await stagehand.extract(
+  "Extract the company overview, main product description, and any technology mentions from this page.",
+  z.object({
     companyOverview: z.string().optional(),
     mainProduct: z.string().optional(),
     techMentions: z.array(z.string()).optional(),
@@ -377,7 +367,8 @@ const result = await stagehand.extract({
       )
       .optional(),
   }),
-});
+);
+// `result` is the parsed object directly — no `.extraction` or other wrapper to unwrap
 ```
 
 ### act()
@@ -385,17 +376,11 @@ const result = await stagehand.extract({
 ```typescript
 // Always wrap in try/catch
 try {
-  await stagehand.act({
-    action: "Click the About link in the navigation",
-  });
+  await stagehand.act("Click the About link in the navigation");
 } catch (error) {
-  await logAgentError(jobId, null, error);
+  await logAgentError(insforge, runId, userId, jobId, error);
 }
 ```
-
-## Company Research Section
-
-Replace the existing Stagehand "Company Research Pattern" section in library-docs.md with this:
 
 ---
 
@@ -407,10 +392,12 @@ Browser's only job is the company website.
 
 ```typescript
 // Step 1 — Homepage extraction
-const homepageData = await stagehand.extract({
-  instruction:
-    "This is a company's homepage. Capture what the company actually does, who it's for, and any concrete signals (funding, customers, scale, mission, recent launches). Then find the internal links most worth visiting to research them as an employer.",
-  schema: z.object({
+const page = stagehand.context.activePage()!;
+await page.goto(homepageUrl);
+
+const homepageData = await stagehand.extract(
+  "This is a company's homepage. Capture what the company actually does, who it's for, and any concrete signals (funding, customers, scale, mission, recent launches). Then find the internal links most worth visiting to research them as an employer, returning each link's exact visible text label so it can be clicked later.",
+  z.object({
     oneLiner: z.string().describe("What the company does in one sentence"),
     productSummary: z
       .string()
@@ -421,7 +408,7 @@ const homepageData = await stagehand.extract({
     pageLinks: z
       .array(
         z.object({
-          url: z.string(),
+          label: z.string().describe("The link's visible text, exactly as shown on the page"),
           kind: z.enum([
             "about",
             "careers",
@@ -435,20 +422,27 @@ const homepageData = await stagehand.extract({
       )
       .describe("Internal links worth visiting"),
   }),
-});
+);
 
-// If oneLiner and productSummary are empty — wrong site or parked domain
-// Skip to synthesis with job description and profile only
-if (!homepageData.oneLiner && !homepageData.productSummary) {
+// If oneLiner and productSummary are empty (trim-checked, not just falsy) — wrong site or
+// parked domain. Skip sub-pages, proceed to synthesis with empty companyResearch.
+if (!homepageData.oneLiner?.trim() && !homepageData.productSummary?.trim()) {
   await stagehand.close();
-  // proceed to synthesis with empty companyResearch
+  // proceed to synthesis with companyResearch = null
 }
 
-// Step 2 — Sub-page extraction (max 3, prefer about/blog/engineering/product over careers)
-const subPageData = await stagehand.extract({
-  instruction:
-    "Extract substance that helps a candidate understand this company before applying: what they do, their values and how they work, the specific technologies and tools they use, notable projects or customers, and how the team operates. Ignore nav, footers, cookie banners, and generic marketing copy.",
-  schema: z.object({
+// Step 2 — Sub-page extraction (max 3, prefer about/blog/engineering/product over careers).
+// IMPORTANT: hrefs pulled out via extract() are unreliable — the model sometimes echoes
+// internal snapshot node references or the visible label instead of a real URL. Navigate
+// by clicking the visible link text with act() instead, then read the real landed URL.
+await page.goto(homepageUrl); // reset before each click attempt
+const clickResult = await stagehand.act(`Click the "${pageLinks[0].label}" link`);
+if (!clickResult.success) {
+  // skip this link, try the next preferred kind — never abort the whole research over one bad click
+}
+const subPageData = await stagehand.extract(
+  "Extract substance that helps a candidate understand this company before applying: what they do, their values and how they work, the specific technologies and tools they use, notable projects or customers, and how the team operates. Ignore nav, footers, cookie banners, and generic marketing copy.",
+  z.object({
     keyPoints: z.array(z.string()),
     technologies: z
       .array(z.string())
@@ -460,7 +454,8 @@ const subPageData = await stagehand.extract({
       .array(z.string())
       .describe("Customers, funding, scale, projects, awards"),
   }),
-});
+);
+const visitedUrl = page.url(); // capture the real landed URL — feeds the dossier's `sources` field
 
 // Step 3 — Gemini 2.5 Flash synthesis (after browser closes)
 // Feed three data sources: company research + job from DB + profile from DB
@@ -530,12 +525,14 @@ const response = await ai.models.generateContent({
 **Rules:**
 
 - Always use `extract()` with a Zod schema — never parse raw HTML or use regex
+- Navigate to sub-pages via `act()` clicking the visible link label, never by extracting and trusting a `url`/href field — confirmed in practice that `extract()` can return internal snapshot node references or label text instead of a real URL
 - Always wrap every `act()` and `extract()` in try/catch
-- Always call `await stagehand.close()` when done — ends the Browserbase session
+- Always call `await stagehand.close()` when done — closes the local Chromium instance
 - Model is always `gemini-2.5-flash` — never use other models
 - Temperature is `0.4` for synthesis — grounded but flexible enough to make real connections
-- Max 3 sub-pages — never exceed this on free plan
-- Always close session in finally block — never leave sessions open even if research fails
+- Max 3 sub-pages — keep sessions short regardless of local resources
+- Always close in a `finally` block — never leave a Chromium process running even if research fails
+- `headless: true` always for server contexts — never flip to `false` outside local debugging
 - Job description and profile always come from DB — never re-fetch via browser
 - If browser research returns empty — still run synthesis with job + profile only
 - yourEdge, gapsToAddress, and smartQuestions are the most valuable fields — never skip them
@@ -702,6 +699,54 @@ getPostHogClient().capture({
 - Always include `userId` as a property on every server-side event (except where the distinct ID itself is the user ID)
 - Call `posthog.identify(userId)` after login on client side (see `components/PostHogIdentify.tsx` — fires on every authenticated visit to `/dashboard`, which also covers returning visitors)
 - Call `posthog.reset()` on logout on client side (see `components/dashboard/SignOutButton.tsx`)
+
+---
+
+### Querying Data Back (HogQL Query API)
+
+**Check first:** Check AGENTS.md for an installed PostHog skill/MCP with query support. If a PostHog MCP server is authenticated for this project, use it to verify event schemas before changing this section — it was written without one (the MCP server was unauthenticated when Feature 17 was built), using PostHog's public docs as the source of truth instead of training data.
+
+`posthog-node` (used in `lib/posthog-server.ts`) is **write-only** — it has no read/query methods. Reading events back (for the Analytics Charts dashboard) requires calling PostHog's separate **Query API** directly via `fetch`, authenticated with a **Personal API Key** (a different credential from the write-only `NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN`).
+
+```typescript
+// lib/posthog-analytics.ts
+// POSTHOG_API_HOST is the app host (https://us.posthog.com), NOT the same as
+// NEXT_PUBLIC_POSTHOG_HOST (https://us.i.posthog.com) — that's ingestion-only and
+// rejects authenticated reads. Confirmed directly against PostHog's public docs.
+const url = `${process.env.POSTHOG_API_HOST}/api/projects/${process.env.POSTHOG_PROJECT_ID}/query/`;
+
+const response = await fetch(url, {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${process.env.POSTHOG_PERSONAL_API_KEY}`,
+  },
+  body: JSON.stringify({
+    query: {
+      kind: "HogQLQuery",
+      query: `SELECT toDate(timestamp) AS day, count() AS cnt
+              FROM events
+              WHERE event = 'job_found' AND distinct_id = '${userId}'
+              GROUP BY day ORDER BY day`,
+    },
+  }),
+  cache: "no-store",
+});
+
+const { results } = await response.json(); // results: row-arrays, in SELECT column order
+```
+
+The `events` table's relevant columns: `event`, `timestamp`, `distinct_id`, `properties` (JSON — access a custom property with dot notation, e.g. `properties.matchScore`).
+
+**Rules:**
+
+- Three new env vars, all server-only (never `NEXT_PUBLIC_`): `POSTHOG_API_HOST` (app host, e.g. `https://us.posthog.com` — distinct from `NEXT_PUBLIC_POSTHOG_HOST`'s ingestion-only host), `POSTHOG_PERSONAL_API_KEY` (must start with `phx_` — `ik_`/other prefixes are not PostHog keys and will 401), `POSTHOG_PROJECT_ID`
+- The Personal API Key only needs the **Query: Read** scope — no write access, no other resource scopes required for this feature
+- Always filter by `distinct_id = '{userId}'` — every event in this project is captured with `distinctId: userId` (confirmed in `agent/itpro.ts`, `app/api/agent/research/route.ts`)
+- HogQL has no documented parameter-binding syntax — interpolate `userId` directly into the query string, but always escape single quotes first (`userId` here is always our own auth-generated UUID, never raw user input, but escape anyway as defense in depth)
+- `results` is an array of row-arrays in `SELECT` column order — index positionally, there is no per-row object with named keys
+- Always wrap the fetch in try/catch and treat any failure (network error, non-2xx, missing credentials) as an empty result (`[]`), not a thrown error — a missing/invalid Personal API Key should make a chart show its empty state, not crash the Dashboard page
+- Match-score bucketing happens in TypeScript after fetching raw scores, not in HogQL `CASE` — simpler to get bucket boundaries right (`[50,60)`, `[60,70)`, `[70,80)`, `[80,90)`, `[90,100]`)
 
 ---
 

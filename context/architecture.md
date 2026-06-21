@@ -6,11 +6,12 @@
 | ------------------------------ | ------------------------ | ------------------------------------------------ |
 | Framework                      | Next.js 16 (App Router)  | Full stack framework                             |
 | Auth + DB + Storage + Realtime | InsForge                 | Entire backend                                   |
-| Cloud browser                  | Browserbase              | Company research — browsing company public pages |
+| Local browser                  | Playwright (via Stagehand LOCAL) | Company research — browsing company public pages, no cloud account |
 | AI browser control             | Stagehand                | Company page interaction and content extraction  |
 | Job Discovery                  | ITPro.lk API              | Job search and discovery (Sri Lanka tech jobs)   |
 | AI model                       | Google Gemini 2.5 Flash  | Matching, research synthesis, extraction         |
 | Analytics                      | PostHog                  | Event tracking and dashboard charts              |
+| Charting                       | recharts                 | Dashboard analytics charts (line/area, bar)      |
 | PDF generation                 | @react-pdf/renderer      | Resume PDF rendering                             |
 | Styling                        | Tailwind CSS + shadcn/ui | UI components and styling                        |
 | Language                       | TypeScript strict        | Throughout                                       |
@@ -74,10 +75,12 @@
 ├── components/
 │   ├── ui/                                → shadcn/ui components only
 │   ├── shared/                            → Cross-feature components used by more than one page/feature folder
-│   │   └── ActionResultDialog.tsx         → Centered success/error popup for action buttons (Save, Extract, Generate) — see ui-registry.md
+│   │   ├── ActionResultDialog.tsx         → Centered success/error popup for action buttons (Save, Extract, Generate) — see ui-registry.md
+│   │   └── SignOutButton.tsx              → Client component — calls posthog.reset() then submits signOutAction. Moved here in Feature 14 once AppNavbar started rendering it on every protected page, not just Dashboard
 │   ├── layout/
 │   │   ├── Navbar.tsx
-│   │   └── Footer.tsx
+│   │   ├── Footer.tsx
+│   │   └── AppNavbar.tsx                  → App-shell navbar (Dashboard/Find Jobs/Profile + SignOutButton) — distinct from the marketing Navbar.tsx
 │   ├── homepage/
 │   │   ├── Hero.tsx
 │   │   ├── HowItWorks.tsx
@@ -85,8 +88,8 @@
 │   ├── dashboard/
 │   │   ├── StatsBar.tsx
 │   │   ├── RecentActivity.tsx
-│   │   ├── AnalyticsCharts.tsx
-│   │   └── SignOutButton.tsx              → Client component — calls posthog.reset() then submits signOutAction
+│   │   ├── AnalyticsCharts.tsx            → Client component (recharts) — Jobs Found Over Time, Company Research Activity, Match Score Distribution
+│   │   └── IncompleteProfileBanner.tsx    → Real calculateProfileCompletion() check, renders only when profile is incomplete
 │   ├── profile/
 │   │   ├── ProfileForm.tsx
 │   │   ├── ResumeUpload.tsx
@@ -106,13 +109,14 @@
 ├── lib/
 │   ├── insforge-client.ts                 → InsForge browser client instance
 │   ├── insforge-server.ts                 → InsForge server client
-│   ├── browserbase.ts                     → Browserbase session creation + management
-│   ├── stagehand.ts                       → Stagehand initialisation with Browserbase session
+│   ├── stagehand.ts                       → Stagehand LOCAL initialisation — local Playwright Chromium, no Browserbase account needed
 │   ├── itpro.ts                           → ITPro.lk API client
 │   ├── posthog-server.ts                  → PostHog server client (singleton, see instrumentation-client.ts for the browser client)
+│   ├── posthog-analytics.ts               → getAnalyticsChartsData() (Feature 17) — reads events back via PostHog's Query API (HogQL), separate credential/surface from posthog-server.ts's write-only capture
 │   ├── resume.ts                          → pdf-parse extraction + Gemini 2.5 Flash resume content/profile generation (server-only)
 │   ├── resume-pdf.tsx                     → @react-pdf/renderer <Document> component — server-only, used only by app/api/resume/generate
 │   ├── gemini.ts                          → generateContentWithRetry() — shared by every Gemini call in the project
+│   ├── dashboard.ts                       → getStatsBarData() (Feature 15), getRecentActivity() (Feature 16) — real Dashboard DB queries
 │   └── utils.ts                           → MATCH_THRESHOLD, MAX_JOBS_PER_RUN, formatRelativeTime()
 └── types/
     └── index.ts                           → Global TypeScript types
@@ -174,7 +178,7 @@ API route in app/api/agent/research
         ↓
 Calls agent/research.ts
         ↓
-Single Browserbase session opens with Stagehand
+Local Stagehand session opens (Playwright Chromium)
         ↓
 Navigates to company homepage + sub pages
         ↓
@@ -260,9 +264,10 @@ URL saved to profiles table
 | external_apply_url | text        | Direct company apply URL                       |
 | title              | text        |                                                |
 | company            | text        |                                                |
-| location           | text        |                                                |
-| salary             | text        | If available                                   |
-| job_type           | text        | fulltime / parttime / contract                 |
+| website            | text        | Company homepage from ITPro.lk's `website` field — null on ~1/3 of listings, falls back to `https://www.{company}.com` for research |
+| location           | text        | Parsed from ITPro.lk's `summary` text (e.g. "Colombo"/"Remote") — its `location` field is an opaque id with no real value |
+| salary             | text        | If available — never populated for ITPro.lk jobs, the API has no salary field at all |
+| job_type           | text        | Free text parsed from ITPro.lk's `summary` (e.g. "Full-time"/"Internship") — not a fixed enum |
 | about_role         | text        | 2-3 sentence summary                           |
 | responsibilities   | text[]      | Bullet points                                  |
 | requirements       | text[]      | Bullet points                                  |
@@ -274,6 +279,7 @@ URL saved to profiles table
 | matched_skills     | text[]      | Skills user has that match                     |
 | missing_skills     | text[]      | Skills user lacks                              |
 | company_research   | jsonb       | Company dossier from research agent            |
+| researched_at      | timestamptz | Set when company_research is saved — null on rows researched before Feature 16 added this column. Powers Recent Activity's "Researched X" timestamp; found_at can't be reused for this since it's the discovery time, not the research time |
 | found_at           | timestamptz |                                                |
 
 ### `agent_logs`
@@ -356,15 +362,19 @@ export async function signInWithGoogle() {
 
 ---
 
-## Browserbase Session Pattern
+## Stagehand LOCAL Session Pattern
 
 ```typescript
-// Company research session — single session, sequential page visits
-const session = await bb.sessions.create({
-  projectId: process.env.BROWSERBASE_PROJECT_ID!,
-  timeout: 120, // 2 minute session — visits 3-4 pages max
-});
+// Company research — single local Chromium instance, sequential page visits, headless always on
+const stagehand = createLocalStagehand();
+await stagehand.init();
+// ... extract() calls ...
+await stagehand.close();
 ```
+
+No cloud account, no API key/project ID for the browser itself — `lib/stagehand.ts` is the only place this gets constructed.
+
+**Deployment note:** Stagehand LOCAL needs a persistent Node process with Playwright's Chromium binary present on disk at request time. Works on Docker, a VPS, Railway, Render, or Fly.io. Does **not** work on vanilla Vercel serverless functions without separate work (ephemeral filesystem, execution-time limits) — not a concern for now, just a known constraint if a serverless target is chosen later.
 
 ---
 

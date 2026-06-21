@@ -97,21 +97,22 @@ Centered single card on `bg-background`. No design mockup exists for this page �
 - Error banner (shown via `?error=` search param): `rounded-md border border-error/30 bg-error/10 px-3 py-2 text-sm text-error`
 - Subhead under heading: `text-sm text-text-secondary`
 
-### DashboardPage (placeholder)
+### DashboardPage
 
 `app/dashboard/page.tsx`
+Last updated: 2026-06-21 (Feature 14)
 
-Minimal placeholder for Feature 02 so the auth flow is end-to-end testable — will be fully replaced by Feature 14's real dashboard UI. As of Feature 06, wrapped with `AppNavbar` (`active="Dashboard"`) so it's navigable to/from Profile during manual testing; the centered content below the navbar is otherwise unchanged.
+Real dashboard UI, replacing the Feature 02 placeholder. Built against `context/designs/dashboard.png`.
 
-- Page wrapper: `min-h-screen bg-background`, with `<AppNavbar active="Dashboard" />` then `<main className="flex flex-col items-center justify-center gap-4 px-6 py-24">`
-- Label text: `text-sm text-text-secondary` (e.g. "Signed in as")
-- Value text: `text-lg font-semibold text-text-primary` (e.g. the user's email)
-- Sign out button: extracted to `components/dashboard/SignOutButton.tsx` (client component — calls `posthog.reset()` on click, then submits `signOutAction`). Same classes as the shared **Secondary Button** pattern below.
+- Page wrapper: `flex min-h-screen flex-col bg-background`, with `<AppNavbar active="Dashboard" />` then `<main className="mx-auto flex w-full max-w-[1440px] flex-1 flex-col gap-4 px-8 py-6">`
+- Layout order: `IncompleteProfileBanner` (conditional, real `calculateProfileCompletion()` check) → `StatsBar` → a `grid flex-1 content-stretch grid-cols-1 gap-4 lg:grid-cols-2` row containing `RecentActivity` then `AnalyticsCharts` (which renders 3 chart cards as a flattened Fragment, so the 2-col grid naturally pairs RecentActivity|CompanyResearchChart on row 1 and JobsOverTimeChart|MatchScoreChart on row 2 — same order as the design)
+- **One-viewport-fit pattern**: `main` is `flex-1` inside the `flex flex-col` outer page wrapper, and the chart-row grid is also `flex-1` with `content-stretch` (`align-content: stretch`) so leftover vertical space flows into the grid rows rather than sitting as dead space below the last card — without this, CSS Grid's default `align-content: start` leaves unused height stranded under the grid when content is shorter than the viewport (confirmed by reproducing it: the incomplete-profile and complete-profile states differ by the banner's ~90px, and only one of them naturally fills a fixed-height layout). Chart cards are `flex h-full flex-col` with their `ResponsiveContainer` wrapped in a `min-h-0 flex-1` div (not a fixed height) so the chart itself grows/shrinks to fill whatever the grid row's stretched height is. `RecentActivity`'s `<ul>` is `flex-1 flex-col justify-evenly` for the same reason. Any future dashboard-style page that needs to fill exactly one viewport regardless of conditional content (banners, empty states) should follow this same `flex-1` + `content-stretch` + `min-h-0 flex-1` chain, not fixed pixel heights.
+- Mock data (Features 15-17 replace with real DB/PostHog queries) mirrors `dashboard.png` exactly: stats 284/82%/35/28, the same 5 Recent Activity entries, and the same chart data points for all 3 charts — same precedent as Feature 09's find-jobs mock data, for direct visual diffing against the design.
 
 ### SignOutButton
 
-File: `components/dashboard/SignOutButton.tsx`
-Last updated: 2026-06-18
+File: `components/shared/SignOutButton.tsx`
+Last updated: 2026-06-21 (Feature 14 — moved from `components/dashboard/`)
 
 | Property         | Class                                                              |
 | ----------------- | ------------------------------------------------------------------ |
@@ -126,12 +127,12 @@ Last updated: 2026-06-18
 | Accent usage       | none                                                                |
 
 **Pattern notes:**
-Extracted from the inline button that used to live in `app/dashboard/page.tsx` so it could become a client component (needs `onClick` to call `posthog.reset()` before the form submits to `signOutAction`). Classes are unchanged — this is a 1:1 match of the existing **Secondary/outline button** shared pattern below, not a new variant. Any future plain bordered button should keep matching that shared pattern, not this entry specifically.
+Moved to `components/shared/` in Feature 14 once `AppNavbar` started rendering it on every protected page (Dashboard/Find Jobs/Profile/Job Details), not just the old Dashboard placeholder — matches `architecture.md`'s own boundary rule ("a component used by only one feature stays in that feature's own folder... `shared/` holds components used by more than one feature folder"). Classes unchanged — still a 1:1 match of the **Secondary/outline button** shared pattern below.
 
 ### AppNavbar
 
 File: `components/layout/AppNavbar.tsx`
-Last updated: 2026-06-18 (now also used by `app/dashboard/page.tsx`)
+Last updated: 2026-06-21 (Feature 14 — now renders `SignOutButton`)
 
 | Property         | Class                                                                |
 | ---------------- | --------------------------------------------------------------------- |
@@ -140,13 +141,97 @@ Last updated: 2026-06-18 (now also used by `app/dashboard/page.tsx`)
 | Border radius      | none                                                                  |
 | Text — primary     | active link: `text-accent`                                          |
 | Text — secondary   | inactive link: `text-text-dark`, hover: `hover:text-text-primary`   |
-| Spacing            | wrapper `mx-auto flex h-16 max-w-[1440px] items-center justify-between px-6`, nav links `gap-8` |
+| Spacing            | wrapper `mx-auto flex h-16 max-w-[1440px] items-center justify-between px-6`, right-side group `flex items-center gap-8` wrapping nav `gap-8` + `SignOutButton` |
 | Hover state        | inactive links only — `hover:text-text-primary`                     |
 | Shadow             | none                                                                  |
 | Accent usage       | `text-accent` on the active nav item only, no underline             |
 
 **Pattern notes:**
-App-shell navbar (Dashboard / Find Jobs / Profile) — distinct from the marketing `Navbar.tsx` (logo + CTA, no active-state links). Shares the same wrapper/logo classes as the marketing navbar but adds an `active` prop (`"Dashboard" | "Find Jobs" | "Profile"`) that swaps a link to `text-accent`. No CTA button — app pages don't need one. Built for Feature 05 (Profile); added to the Dashboard placeholder during Feature 06 (at the developer's request, to unblock manual testing — Dashboard's real UI is still Feature 14's). Feature 09 (Find Jobs) should reuse this component too rather than building its own navbar.
+App-shell navbar (Dashboard / Find Jobs / Profile) — distinct from the marketing `Navbar.tsx` (logo + CTA, no active-state links). Shares the same wrapper/logo classes as the marketing navbar but adds an `active` prop (`"Dashboard" | "Find Jobs" | "Profile"`) that swaps a link to `text-accent`. Built for Feature 05 (Profile); reused by Find Jobs/Job Details/Dashboard since. **Feature 14 addition**: now renders `SignOutButton` to the right of the nav links (previously only the old Dashboard placeholder had a sign-out button, inline in the page body) — sign-out is now available from every protected page, not just Dashboard. Note: the `context/designs/dashboard.png` mockup shows a purple underline beneath the active "Dashboard" link, which contradicts this component's documented "color-only, no underline" active-state rule — left unchanged in Feature 14 since `AppNavbar` is shared across 4 already-shipped pages and this is a minor, isolated visual difference, not a functional one. Flagged here rather than silently changed; revisit if the developer wants the underline applied project-wide.
+
+### StatsBar
+
+File: `components/dashboard/StatsBar.tsx`
+Last updated: 2026-06-21 (Feature 15)
+
+| Property         | Class                                                                |
+| ---------------- | --------------------------------------------------------------------- |
+| Background        | `bg-surface`                                                         |
+| Border             | `border border-border`                                              |
+| Border radius      | `rounded-2xl`                                                         |
+| Text — primary     | value `text-3xl font-semibold text-text-primary`                    |
+| Text — secondary   | label `text-sm text-text-secondary`, subtitle/trend-suffix `text-xs text-text-muted` |
+| Spacing            | card `p-5`, grid `grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4`   |
+| Hover state        | none — not interactive                                                |
+| Shadow             | standard card shadow                                                  |
+| Accent usage       | none — trend pill uses the existing Trend Badge token (`bg-success-lightest`/`text-success-darker`), not accent |
+
+**Pattern notes:**
+4 stat cards, props-driven (`StatCard[]`) — component itself is unchanged since Feature 14. **Feature 15 update**: `app/dashboard/page.tsx` now sources all four values from `lib/dashboard.ts`'s `getStatsBarData(insforge, userId)` instead of mock data — Total Jobs Found (count), Avg. Match Rate (avg of `match_score`, computed client-side since the SDK's PostgREST builder exposes no `avg()` aggregate), Companies Researched (count where `company_research IS NOT NULL`), Jobs This Week (count where `found_at` within the last 7 days). All four now render via the `subtitle` path ("All time" / "Across all jobs" / "Total researched" / "New this week") — the mock's green trend pills ("+12%"/"+3%") were dropped rather than faked, since `build-plan.md`'s Feature 15 logic only specifies the four raw metrics, not a week-over-week comparison, and there's no stored historical snapshot to diff against. `StatsBar` still supports `trend` for any future card that does have a real comparison to show.
+
+### RecentActivity
+
+File: `components/dashboard/RecentActivity.tsx`
+Last updated: 2026-06-21 (Feature 16)
+
+| Property         | Class                                                                |
+| ---------------- | --------------------------------------------------------------------- |
+| Background        | `bg-surface`                                                         |
+| Border             | `border border-border`, row divider `border-t border-border`        |
+| Border radius      | `rounded-2xl`                                                         |
+| Text — primary     | entry text `text-sm font-medium text-text-primary`                  |
+| Text — secondary   | timestamp `text-xs text-text-muted`                                 |
+| Spacing            | card `p-5`, row `py-3`, dot-to-text gap `gap-3`                      |
+| Hover state        | none — not interactive                                                |
+| Shadow             | standard card shadow                                                  |
+| Accent usage       | dot only — see Activity Dots in `ui-tokens.md`                       |
+
+**Pattern notes:**
+Props-driven (`ActivityItem[]`, `type: "job_found" | "company_researched"`) — component itself unchanged since Feature 14. Dot colors follow `ui-tokens.md`'s Activity Dots table (job found = success green, company researched = accent purple) — a deliberate 2-color semantic rule rather than reproducing `dashboard.png`'s exact per-row colors 1:1, since the design's own 5 sample dots don't actually follow a consistent type-to-color rule themselves (the same "Found X jobs" type appears in both purple and green across different rows). Each entry renders as a single row (icon + text + timestamp inline, `justify-between`) rather than the design's two-line (text above, timestamp below) — a deliberate compactness tradeoff so the card fits the one-viewport-fit layout (see DashboardPage above), confirmed with the developer.
+
+**Feature 16 update — wired to real data:** `app/dashboard/page.tsx` now sources `activities` from `lib/dashboard.ts`'s `getRecentActivity(insforge, userId)` instead of mock data. Merges two sources sorted by recency, capped at 5: completed `agent_runs` rows with `job_title_searched` set ("Found X jobs for [title]") and `jobs` rows with `researched_at` set ("Researched [company]") — required adding a `researched_at` column to `jobs` since `found_at` only captures discovery time, not when research completed. Timestamps go through the existing `formatRelativeTime()` from `lib/utils.ts`, matching the "X hours ago"/"Yesterday" format already used on Find Jobs.
+
+### AnalyticsCharts
+
+File: `components/dashboard/AnalyticsCharts.tsx`
+Last updated: 2026-06-21 (Feature 17)
+
+| Property         | Class                                                                |
+| ---------------- | --------------------------------------------------------------------- |
+| Background        | `bg-surface`                                                         |
+| Border             | `border border-border`                                              |
+| Border radius      | `rounded-2xl`                                                         |
+| Text — primary     | chart title `text-base font-semibold text-text-primary`             |
+| Text — secondary   | axis labels `#9CA3AF` 12px (recharts inline `tick` prop, not a Tailwind class — recharts doesn't accept CSS variables here) |
+| Spacing            | card `p-5`                                                            |
+| Hover state        | none                                                                   |
+| Shadow             | standard card shadow                                                  |
+| Accent usage       | per `ui-tokens.md`'s Dashboard Chart Colors — purple `#7C5CFC` line/gradient (Jobs Found Over Time), blue `#61A8FF` bars (Company Research Activity), green `#10B981` bars (Match Score Distribution) |
+
+**Pattern notes:**
+First use of `recharts` in the project (newly approved in `code-standards.md`) — `"use client"` at the top since recharts requires browser APIs. One file housing 3 private, non-exported chart helpers (`JobsOverTimeChart`, `CompanyResearchChart`, `MatchScoreChart`) per `architecture.md`'s single-file plan for this section — same "private helper inside the same file" precedent as `JobDescription.tsx`'s `BulletSection`. The exported `AnalyticsCharts` component returns a bare Fragment of the 3 chart cards (in Company Research → Jobs Over Time → Match Score order) rather than its own grid — relies on the parent page's 2-column grid auto-flowing them alongside `RecentActivity` into the exact row pairing the design shows (see DashboardPage above). Chart color hex values are passed as literal recharts props (`stroke`/`fill`), not Tailwind classes — recharts' SVG props don't resolve CSS custom properties the way Tailwind utility classes do, so this is the one place in the project where literal hex values are correct despite `ui-rules.md`'s "never hardcode hex" rule (the rule targets component className strings, not third-party charting library props that have no Tailwind equivalent).
+
+**Feature 17 update:** each chart helper takes a `hasData: boolean` prop (`hasJobsOverTimeData`/`hasCompanyResearchData`/`hasMatchScoreData` on `AnalyticsCharts`, all defaulting to `true`) — when false, renders `RecentActivity.tsx`'s plain-text empty-state pattern (`<p className="mt-4 text-sm text-text-muted">`) instead of the chart, keeping the same `flex h-full flex-col` card chrome so grid-stretch sizing is unaffected whether a card shows a chart or an empty state. Data now comes from `lib/posthog-analytics.ts`'s `getAnalyticsChartsData()`, which queries PostHog's events directly rather than the InsForge DB (the only dashboard data source that does this — see `progress-tracker.md`).
+
+### IncompleteProfileBanner
+
+File: `components/dashboard/IncompleteProfileBanner.tsx`
+Last updated: 2026-06-21 (Feature 14)
+
+| Property         | Class                                                                |
+| ---------------- | --------------------------------------------------------------------- |
+| Background        | `bg-surface`                                                         |
+| Border             | `border border-border`                                              |
+| Border radius      | `rounded-2xl`                                                         |
+| Text — primary     | `text-sm font-medium text-text-primary`                             |
+| Text — secondary   | `text-sm text-text-secondary`                                       |
+| Spacing            | `px-5 py-4`                                                           |
+| Hover state        | CTA button `hover:opacity-90`                                        |
+| Shadow             | standard card shadow                                                  |
+| Accent usage       | CTA button is the **Primary Button** pattern                        |
+
+**Pattern notes:**
+Distinct from `ProfileCompletionBanner.tsx` (the ring-based banner on the Profile page itself) — no design mockup shows this banner (the `dashboard.png` reference depicts a complete-profile state), so built directly from `ui-tokens.md`/`ui-rules.md`: a plain white card (never a colored background, per `ui-rules.md`) with a short message + percentage and a "Complete Profile" link to `/profile`. Wired to the real `calculateProfileCompletion()` result against the DB row (not mocked) since that function and data already exist from Feature 06 at no extra cost — only renders when `!completion.isComplete`.
 
 ### ProfileCompletionBanner
 
@@ -326,7 +411,7 @@ Last updated: 2026-06-19
 | Accent usage       | none — match score uses range-based color, never accent              |
 
 **Pattern notes:**
-Exports the `Job` type — consumed by `app/find-jobs/page.tsx`. Company avatar is a generic `Building2` icon (`lucide-react`, `text-text-muted`) in an `8x8` rounded square, `bg-surface-secondary` — no per-company logo data exists in the schema, so every row gets the same placeholder. **Match score bar/percentage color is range-based, not accent**: ≥90% `text-success`/`bg-success`, 80-89% `text-info`/`bg-info`, below 80% `text-warning`/`bg-warning` — corrected from two previously-conflicting tables in `ui-tokens.md`/`ui-rules.md` to match `context/designs/find-jobs.png` exactly (see `progress-tracker.md`). Bar track is `bg-border-light`, `h-1 w-16 rounded-full`, fill width set via inline `style` since Tailwind has no arbitrary-percentage-by-prop utility — this is the one acceptable inline-style use case in the project (a computed numeric value, not a static design choice).
+Exports the `Job` type — consumed by `app/find-jobs/page.tsx`. Company avatar is a generic `Building2` icon (`lucide-react`, `text-text-muted`) in an `8x8` rounded square, `bg-surface-secondary` — no per-company logo data exists in the schema, so every row gets the same placeholder. **Match score bar/percentage color is range-based, not accent**: above 80% `text-success`/`bg-success`, 70-80% `text-info`/`bg-info`, below 70% `text-warning`/`bg-warning` — originally matched `context/designs/find-jobs.png` exactly (90/80 thresholds), then corrected by the developer to 80/70 (2026-06-20) since the design-derived thresholds felt too strict in practice (see `progress-tracker.md`). Bar track is `bg-border-light`, `h-1 w-16 rounded-full`, fill width set via inline `style` since Tailwind has no arbitrary-percentage-by-prop utility — this is the one acceptable inline-style use case in the project (a computed numeric value, not a static design choice).
 
 **Feature 10 update:** `salary` is now `string | null` (ITPro.lk never returns salary) — renders `"Not specified"` in `text-text-muted` when null. Added an empty state (centered `Building2` icon + muted text, no card content) for when the current user has zero saved jobs, per `ui-rules.md`'s "every section that can be empty must have an empty state" rule — first table-level empty state in the project (distinct from `ResumeUpload`'s empty-dropzone state, which is a default visual, not a conditional branch).
 
@@ -351,6 +436,108 @@ Last updated: 2026-06-19
 Page-number row renders up to the first 3 pages (`leadingPageNumbers`, derived from the real `totalPages` prop, not hardcoded), then an ellipsis + final-page button only when `totalPages` exceeds that — **fixed in Feature 10** after the real DB-backed page only had 1 page and exposed that the original implementation hardcoded `[1, 2, 3]` regardless of the `totalPages` prop (Feature 09's mock always passed `totalPages=8`, which masked the bug). `app/find-jobs/page.tsx` only renders this component at all when there's at least one job.
 
 **Feature 11 update — wired to real pagination:** now a client component; Previous/Next/page-number/last-page buttons call `router.push()` (not `replace`, so the back button steps through pages) via the shared `buildFindJobsUrl()` helper, carrying the current `query`/`match`/`sort` props through so paging never drops the active filters. Also fixed a second latent bug found while wiring real clicks: the final-page button (after the ellipsis) never received the active/highlighted style even when it was the current page — only the three `leadingPageNumbers` buttons checked `page === currentPage`. Extracted both buttons' class logic into one shared `pageButtonClasses()` function.
+
+**Feature 12 update — rows are clickable to `/find-jobs/{id}`:** per `project-overview.md`'s "click job row → opens job details page". `scoreColorClasses()` moved out to `lib/utils.ts` (now shared with `JobInfo`/`MatchScore`), no visual change to the existing text/bar usage here. Row click target is a `<Link>` nested inside the existing first `<td>` (not a new sibling `<td>`) with `absolute inset-0`, positioned relative to a `relative` `<tr>` — covers the whole row's click area. **Bug found and fixed this same feature**: the first version added a 6th `<td>` for the overlay instead of nesting inside an existing one — browsers still count an absolutely-positioned `<td>` toward table column layout, which visually shifted every real cell one column to the right (Company column went blank). Nesting inside the existing cell avoids touching column count at all. Any future row-wide click target in a `<table>` in this project should nest inside an existing cell, never add a dedicated overlay cell.
+
+### JobInfo
+
+File: `components/job-details/JobInfo.tsx`
+Last updated: 2026-06-20
+
+| Property         | Class                                                                |
+| ---------------- | --------------------------------------------------------------------- |
+| Background        | header card + 4 info cards: `bg-surface`                            |
+| Border             | `border border-border`                                              |
+| Border radius      | `rounded-2xl`                                                         |
+| Text — primary     | title `text-xl font-semibold text-text-primary`, info card value `text-sm font-medium text-text-primary` |
+| Text — secondary   | company `text-sm text-text-secondary`, info card label `text-xs text-text-muted` |
+| Spacing            | header card `p-6`, info cards `p-4`, info card grid `gap-4`         |
+| Hover state        | View Job Post button `hover:bg-surface-secondary`                   |
+| Shadow             | standard card shadow                                                  |
+| Accent usage       | none — Match Score badge uses range-based color via `scoreColorClasses()`, never accent |
+
+**Pattern notes:**
+Logo placeholder reuses `JobsTable`'s `Building2`-in-`bg-surface-secondary`-square pattern (no per-company logo data exists). "View Job Post" links to `source_url` (the ITPro.lk listing, opens in new tab) using the **Secondary/outline button** shared pattern with an `ExternalLink` icon. Match Score badge is a pill using `scoreColorClasses()`'s new `badgeBg`/`badgeText` fields — `bg-success-lightest`/`text-success-foreground` (above 80%), `bg-info-lightest`/`text-info-foreground` (70-80%), `bg-warning/10`/`text-warning` (below 70%, opacity-modifier since no `--color-warning-light` token exists, matching the login page's `bg-error/10` precedent). The 4 info cards (Salary Est./Location/Job Type/Date Found) are a `.map()` over an array, each a muted-icon-in-square (same convention as the logo placeholder) + bold value + muted label; null `salary`/`location`/`job_type` render as `"—"`.
+
+### MatchScore
+
+File: `components/job-details/MatchScore.tsx`
+Last updated: 2026-06-20
+
+| Property         | Class                                                                |
+| ---------------- | --------------------------------------------------------------------- |
+| Background        | `bg-surface`                                                         |
+| Border             | `border border-border`                                              |
+| Border radius      | `rounded-2xl`                                                         |
+| Text — primary     | heading `text-base font-semibold text-text-primary`                 |
+| Text — secondary   | reasoning paragraph `text-sm text-text-secondary`, "You have"/"Gap skills" labels `text-xs font-medium uppercase text-text-secondary` |
+| Spacing            | `p-6`, skills section gap `gap-4`, badge row `gap-2`                |
+| Hover state        | none — not interactive                                                |
+| Shadow             | standard card shadow                                                  |
+| Accent usage       | none                                                                  |
+
+**Pattern notes:**
+Renders two cards (AI Match Reasoning, Required Skills vs Your Profile) from one component — matches `architecture.md`'s single-file listing for this section. Matched-skill badges: `bg-success-lightest text-success-foreground` with a `Check` icon — matches `ui-tokens.md`'s existing "Matched skill" entry exactly. Missing-skill badges: `bg-warning/10 text-warning` with an `X` icon — **deliberately does not match** `ui-tokens.md`'s old "Missing skill" entry (`bg-accent-muted text-accent`), which was stale and never actually matched `job-details.png` (the design uses the same orange as the Match Score Bar's lowest tier). Corrected in `ui-tokens.md` to follow the design as source of truth. Both badge groups render a muted fallback line ("No matched skills found."/"No skill gaps found.") instead of an empty row when their array is empty.
+
+### JobDescription
+
+File: `components/job-details/JobDescription.tsx`
+Last updated: 2026-06-20
+
+| Property         | Class                                                                |
+| ---------------- | --------------------------------------------------------------------- |
+| Background        | `bg-surface`                                                         |
+| Border             | `border border-border`                                              |
+| Border radius      | `rounded-2xl`                                                         |
+| Text — primary     | heading `text-base font-semibold`, sub-heading `text-sm font-semibold` |
+| Text — secondary   | body/bullet text `text-sm text-text-secondary`                      |
+| Spacing            | `p-6`, section gap `gap-5`, bullet list gap `gap-1.5`               |
+| Hover state        | none — not interactive                                                |
+| Shadow             | standard card shadow                                                  |
+| Accent usage       | none                                                                  |
+
+**Pattern notes:**
+Currently only `about_role` ever has data (the only field `agent/itpro.ts` populates — `responsibilities`/`requirements`/`nice_to_have`/`benefits`/`about_company` are real DB columns but always empty until `agent/extractor.ts` is built, which is not part of Feature 12's scope). A private (non-exported) `BulletSection` helper inside the same file renders `null` when its `items` array is empty, so the structured sections are already forward-compatible with zero extra work once that data exists. Bullet marker is a small `bg-text-muted` dot (`h-1 w-1 rounded-full`), not a native `<ul>` disc — first use of this bullet style in the project.
+
+### CompanyResearch
+
+File: `components/job-details/CompanyResearch.tsx`
+Last updated: 2026-06-20
+
+| Property         | Class                                                                |
+| ---------------- | --------------------------------------------------------------------- |
+| Background        | `bg-surface`                                                         |
+| Border             | `border border-border`                                              |
+| Border radius      | `rounded-2xl`                                                         |
+| Text — primary     | heading `text-base font-semibold`, section labels `text-xs font-medium uppercase text-text-secondary`, "No research yet" `text-sm font-medium text-text-primary` |
+| Text — secondary   | body/bullets `text-sm text-text-secondary`, empty-state body `text-sm text-text-muted`, sources `text-xs text-text-muted` |
+| Spacing            | `p-6`, empty state `py-10`, populated state sections `gap-5`        |
+| Hover state        | Research/Research Again button `hover:opacity-90`, disabled while researching |
+| Shadow             | standard card shadow                                                  |
+| Accent usage       | Research Company button is the **Primary Button** pattern; `techStack` tags use `bg-accent/10 text-accent` |
+
+**Pattern notes:**
+Now a client component (Feature 13) — `jobId`/`company`/`initialDossier` props, `dossier`/`isResearching`/`error` state. Same fetch + `ActionResultDialog`-for-errors + button-label-swap (`"Researching..." : "Research Company"`/`"Research Again"`) pattern as `SearchControls.tsx`. Renders all 9 dossier fields once populated per `build-plan.md`'s Company Research Card spec: `companyOverview`/`whyThisRole` as prose, `techStack` as tag badges (reusing `MatchScore.tsx`'s pill shape), `culture`/`yourEdge`/`gapsToAddress`/`smartQuestions`/`interviewPrep` as bullet lists (same muted-dot bullet style as `JobDescription`'s `BulletSection`), `sources` as plain muted text — never links, since the synthesis prompt doesn't guarantee `sources` are real URLs. Empty state markup unchanged from Feature 12, still follows `ui-rules.md`'s Empty States rule exactly.
+
+### JobActions
+
+File: `components/job-details/JobActions.tsx`
+Last updated: 2026-06-20
+
+| Property         | Class                                                                |
+| ---------------- | --------------------------------------------------------------------- |
+| Background        | `bg-accent`                                                          |
+| Border             | none                                                                  |
+| Border radius      | `rounded-md`                                                          |
+| Text — primary     | `text-accent-foreground`, `text-sm font-medium`                     |
+| Text — secondary   | none                                                                  |
+| Spacing            | `px-4 py-3`, full width                                               |
+| Hover state        | `hover:opacity-90`                                                    |
+| Shadow             | none                                                                  |
+| Accent usage       | full **Primary Button** pattern, stretched to `w-full`              |
+
+**Pattern notes:**
+Single full-width link styled as the Primary Button, opens `external_apply_url` in a new tab. Label is dynamic — "Apply Now at {company}" — not static copy.
 
 ---
 

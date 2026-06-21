@@ -1,5 +1,5 @@
 import type { createInsforgeServer } from "@/lib/insforge-server";
-import { fetchRecentJobs, filterJobs, stripHtml } from "@/lib/itpro";
+import { buildJobUrl, fetchRecentJobs, filterJobs, parseLocationAndJobType, stripHtml } from "@/lib/itpro";
 import { getPostHogClient } from "@/lib/posthog-server";
 import type { Profile } from "@/lib/profile";
 import { MATCH_THRESHOLD, MAX_JOBS_PER_RUN } from "@/lib/utils";
@@ -32,17 +32,21 @@ export async function discoverJobs(
       const { matchScore, matchReason, matchedSkills, missingSkills } = result.data;
       if (matchScore >= MATCH_THRESHOLD) strongMatches += 1;
 
+      const { location, jobType } = parseLocationAndJobType(job.summary);
+      const jobUrl = buildJobUrl(job.id);
+
       const { error: insertError } = await insforge.database.from("jobs").insert({
         run_id: runId,
         user_id: userId,
         source: "search",
-        source_url: `https://itpro.lk/jobs/${job.id}`,
-        external_apply_url: `https://itpro.lk/jobs/${job.id}`,
+        source_url: jobUrl,
+        external_apply_url: jobUrl,
         title: job.title,
         company: job.company,
-        location: null,
+        website: job.website,
+        location,
         salary: null,
-        job_type: "fulltime",
+        job_type: jobType,
         about_role: stripHtml(job.description),
         match_score: matchScore,
         match_reason: matchReason,

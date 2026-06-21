@@ -163,11 +163,11 @@ border-radius: 9999px
 background track: #E7EAF3
 ```
 
-Fill color by score — verified directly against `context/designs/find-jobs.png` (Vercel 94%/Linear 96%/OpenAI 91% green, Stripe 88%/Figma 85% blue, Notion 72% orange):
+Fill color by score — corrected by the developer (2026-06-20) from the original design-derived thresholds (90/80), which felt too strict in practice:
 
-- 90-100%: `#10B981` (green)
-- 80-89%: `#61A8FF` (blue)
-- Below 80%: `#FF8904` (orange)
+- Above 80%: `#10B981` (green)
+- 70-80%: `#61A8FF` (blue)
+- Below 70%: `#FF8904` (orange)
 
 ---
 

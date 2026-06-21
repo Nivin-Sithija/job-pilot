@@ -257,7 +257,10 @@ All environment variables defined in `.env.local` for development. Never hardcod
 | `BROWSERBASE_PROJECT_ID`        | lib/browserbase.ts     |
 | `GEMINI_API_KEY`                | agent/ functions       |
 | `NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN` | instrumentation-client.ts, lib/posthog-server.ts |
-| `NEXT_PUBLIC_POSTHOG_HOST`      | instrumentation-client.ts, lib/posthog-server.ts |
+| `NEXT_PUBLIC_POSTHOG_HOST`      | instrumentation-client.ts, lib/posthog-server.ts (ingestion-only host, e.g. `https://us.i.posthog.com` — cannot serve authenticated reads) |
+| `POSTHOG_API_HOST`              | lib/posthog-analytics.ts (app/API host, e.g. `https://us.posthog.com` — different from `NEXT_PUBLIC_POSTHOG_HOST`, never expose to the browser) |
+| `POSTHOG_PERSONAL_API_KEY`      | lib/posthog-analytics.ts (Query: Read scope — never expose to the browser) |
+| `POSTHOG_PROJECT_ID`            | lib/posthog-analytics.ts (Query API target project — never expose to the browser) |
 
 `NEXT_PUBLIC_` prefix means the variable is exposed to the browser. Never add `NEXT_PUBLIC_` to secret keys.
 
@@ -339,6 +342,7 @@ Approved dependencies for this project:
 - `pdf-parse` — Extract text from uploaded PDF
 - `zod` — Schema validation
 - `lucide-react` — Icons
+- `recharts` — Dashboard analytics charts (line/area, bar)
 - `tailwindcss` — Styling
 - `shadcn/ui` components — UI primitives
 
